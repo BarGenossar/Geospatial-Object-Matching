@@ -1,6 +1,7 @@
 # Ignore log files
 *.log
 *.zip
+*.gpkg
 
 # Ignore specific directory
 /data/
