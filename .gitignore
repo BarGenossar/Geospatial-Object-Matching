@@ -1,0 +1,8 @@
+# Ignore log files
+*.log
+*.zip
+
+# Ignore specific directory
+/data/
+/results/
+/saved_model_files/
