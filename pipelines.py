@@ -162,6 +162,7 @@ class PipelineManagerClassicModels(PipelineManager):
         return params_dict
 
 
+
 class PipelineManagerGNN(PipelineManager):
     def __init__(self, seed, logger):
         super().__init__(seed, logger)
