@@ -33,7 +33,6 @@ class Features:
                          "circumference", "aligned_bounding_box_width", "aligned_bounding_box_length",
                          "aligned_bounding_box_height", "num_vertices",
                          ]
-
     # object_properties = ["circumference", "density", "convex_hull_area"]
 
     neighborhood = []
