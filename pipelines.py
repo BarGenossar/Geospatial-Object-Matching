@@ -101,8 +101,8 @@ class PipelineManager:
 class PipelineManagerClassicModels(PipelineManager):
     def __init__(self, seed, logger):
         super().__init__(seed, logger)
-        self.dataset_dict = self._create_dataset_dict()
-        self._train_and_evaluate()
+        # self.dataset_dict = self._create_dataset_dict()
+        # self._train_and_evaluate()
 
     def _create_dataset_dict(self):
         if config.Constants.load_dataset_dict:
