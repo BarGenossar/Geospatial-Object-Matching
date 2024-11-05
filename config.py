@@ -7,7 +7,7 @@ class FilePaths:
 
 
 class Constants:
-    model = "GNN"
+    model = "classic"
     dataset_name = "gpkg"
     seeds_num = 3
     train_ratio = 0.6

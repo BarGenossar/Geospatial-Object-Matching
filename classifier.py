@@ -24,7 +24,7 @@ class FlexibleClassifier:
         self.seed = seed
         self.load_trained_models = load_trained_models
         self.cv = cv
-        self.models_path = config.FilePaths.models_path
+        self.models_path = config.FilePaths.saved_models_path
         self.logger = logger
         self.model_dict = self._get_model_dict()
         self.file_name = get_file_name()

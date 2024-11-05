@@ -65,8 +65,8 @@ class PipelineManager:
             return
         self.object_dict = self._read_objects()
         self.pos_pairs, self.neg_pairs = self._run_blocker()
-        self.neg_indices_train, self.neg_indices_test = self._split_indices(self.neg_pairs)
-        self.pos_indices_train, self.pos_indices_test = self._split_indices(self.pos_pairs)
+        self.neg_indices_train, self.neg_indices_test = self._split_indices(0)
+        self.pos_indices_train, self.pos_indices_test = self._split_indices(1)
         return
 
     def _merge_labels(self):
