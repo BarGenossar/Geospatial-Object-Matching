@@ -60,6 +60,21 @@ class PipelineManager:
             object_dict[objects_type] = dict(sorted(object_dict[objects_type].items()))
         return object_dict
 
+    def _read_objects_delivery3(self, dataset_config):
+        objects_path_dict = self._read_object_path_dict(dataset_config)
+        object_dict = defaultdict(dict)
+        mapping_dict = defaultdict(dict)
+        for objects_type, objects_path in objects_path_dict.items():
+            for file_ind, filename in enumerate(os.listdir(objects_path)):
+                filename = int(filename.split('.')[0])
+                json_data = read_json(objects_path, file_ind)
+                vertices = json_data['vertices']
+                object_dict[objects_type][file_ind] = close_polygon(vertices)
+                mapping_dict[objects_type][file_ind] = filename
+            object_dict[objects_type] = dict(sorted(object_dict[objects_type].items()))
+        object_dict['mapping_dict'] = mapping_dict
+        return object_dict
+
     def split_data(self):
         if config.Constants.load_dataset_dict:
             return
@@ -101,8 +116,6 @@ class PipelineManager:
 class PipelineManagerClassicModels(PipelineManager):
     def __init__(self, seed, logger):
         super().__init__(seed, logger)
-        # self.dataset_dict = self._create_dataset_dict()
-        # self._train_and_evaluate()
 
     def _create_dataset_dict(self):
         if config.Constants.load_dataset_dict:

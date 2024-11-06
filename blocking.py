@@ -52,11 +52,28 @@ class Blocker:
         # todo: Support more complex cases of candidate pairs creation such as conditions on the distance of the
         #  negative pairs
         pos_pairs, neg_pairs = [], []
+        local_mapping_dict = self._get_local_mapping_dict()
         for cand_ind, nn_inds in self.nn_dict.items():
             start_ind = self._get_start_ind4nn(nn_inds, cand_ind)
             for nn_ind in nn_inds[start_ind:start_ind + self.cand_pairs]:
-                if cand_ind == nn_ind:
+                if local_mapping_dict['cands'][cand_ind] == local_mapping_dict['index'][nn_ind]:
                     pos_pairs.append((cand_ind, nn_ind))
                 else:
                     neg_pairs.append((cand_ind, nn_ind))
         return pos_pairs, neg_pairs
+
+    def _get_local_mapping_dict(self):
+        """
+        This function returns the mapping dictionary of the objects in the current object_dict.
+        The mapping is required because in some datasets object file names are recognized as integers and in some
+        datasets as uids
+        """
+        local_mapping_dict = defaultdict(dict)
+        if 'mapping_dict' not in self.object_dict.keys():
+            local_mapping_dict['cands'] = {ind: ind for ind in self.object_dict['cands'].keys()}
+            local_mapping_dict['index'] = {ind: ind for ind in self.object_dict['index'].keys()}
+        else:
+            local_mapping_dict['cands'] = self.object_dict['mapping_dict']['cands']
+            local_mapping_dict['index'] = self.object_dict['mapping_dict']['index']
+        return local_mapping_dict
+
