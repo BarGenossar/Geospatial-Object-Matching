@@ -114,7 +114,7 @@ class FlexibleClassifier:
         best_model = self._get_best_model(model_name, params)
         y_test_preds = best_model.predict(self.dataset_dict['test']['X'])
         # y_prediction_file = best_model.predict(self.dataset_dict['prediction']['X'])
-        result_dict = self._insert_results2dict(result_dict, model_name, y_test_preds)
+        result_dict = self._insert_results_to_dict(result_dict, model_name, y_test_preds)
         return result_dict
 
     def _get_y_train(self, model_name):
@@ -132,24 +132,13 @@ class FlexibleClassifier:
         best_model = grid_search.best_estimator_
         return best_model
 
-    def _insert_results2dict(self, result_dict, model_name, y_test_preds, y_prediction_file=None):
+    def _insert_results_to_dict(self, result_dict, model_name, y_test_preds, y_prediction_file=None):
         # result_dict[model_name]['predictions'] = y_prediction_file
         Y_test = self.dataset_dict['test']['Y']
-        result_dict[model_name]['precision'] = precision_score(Y_test, y_test_preds, average='macro')
-        result_dict[model_name]['recall'] = recall_score(Y_test, y_test_preds, average='macro')
-        result_dict[model_name]['f1'] = f1_score(Y_test, y_test_preds, average='macro')
+        result_dict[model_name]['precision'] = precision_score(Y_test, y_test_preds, average='binary')
+        result_dict[model_name]['recall'] = recall_score(Y_test, y_test_preds, average='binary')
+        result_dict[model_name]['f1'] = f1_score(Y_test, y_test_preds, average='binary')
         result_dict[model_name]['confusion_matrix'] = confusion_matrix(Y_test, y_test_preds)
-        # Print the ids of all misclassified samples, divided into false positives and false negatives. Then,
-        # put these ids in a txt file and save it in the results folder
-        false_positives = [ind for ind in range(len(Y_test)) if Y_test[ind] == 0 and y_test_preds[ind] == 1]
-        false_negatives = [ind for ind in range(len(Y_test)) if Y_test[ind] == 1 and y_test_preds[ind] == 0]
-        # put the ids of the misclassified samples in a txt file, divided into false positives and false negatives
-        # with open(f'{config.FilePaths.results_path}fp_{model_name}_{self.file_name}_seed{self.seed}.txt', 'w') as f:
-        #     for item in false_positives:
-        #         f.write(f"{item}\n")
-        # with open(f'{config.FilePaths.results_path}fn_{model_name}_{self.file_name}_seed{self.seed}.txt', 'w') as f:
-        #     for item in false_negatives:
-        #         f.write(f"{item}\n")
         return result_dict
 
     def _print_results(self):
