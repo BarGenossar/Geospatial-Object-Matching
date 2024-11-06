@@ -19,6 +19,8 @@ class Blocker:
     def _get_centroids(self):
         centroids_dict = defaultdict(dict)
         for objects_type, objects_dict in self.object_dict.items():
+            if objects_type not in ['cands', 'index']:
+                continue
             for file_ind, vertices in objects_dict.items():
                 centroids_dict[objects_type][file_ind] = get_centroid(vertices)
             centroids_dict[objects_type] = dict(sorted(centroids_dict[objects_type].items()))

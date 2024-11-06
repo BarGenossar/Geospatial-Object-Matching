@@ -32,6 +32,8 @@ class ObjectPropertiesProcessor:
     def _get_specific_coordinates(self, coordinate_index):
         specidic_coord_dict = defaultdict(dict)
         for object_type, object_dict in self.object_dict.items():
+            if object_type not in ['cands', 'index']:
+                continue
             for file_ind, vertices in object_dict.items():
                 specidic_coord_dict[object_type][file_ind] = [coord[coordinate_index] for coord in vertices]
         return specidic_coord_dict
@@ -39,6 +41,8 @@ class ObjectPropertiesProcessor:
     def _create_centroids_dict(self):
         centroids_dict = defaultdict(dict)
         for object_type, object_dict in self.object_dict.items():
+            if object_type not in ['cands', 'index']:
+                continue
             for file_ind, vertices in object_dict.items():
                 centroids_dict[object_type][file_ind] = get_centroid(vertices)
         return centroids_dict
@@ -49,6 +53,8 @@ class ObjectPropertiesProcessor:
         for prop in properties:
             self.prop_vals_dict[prop] = dict()
             for obj_type, object_dict in self.object_dict.items():
+                if obj_type not in ['cands', 'index']:
+                    continue
                 self.prop_vals_dict[prop][obj_type] = dict()
                 for file_ind, vertices in object_dict.items():
                     self.prop_vals_dict[prop][obj_type][file_ind] = self.prop_names_dict[prop](vertices, obj_type,
@@ -165,6 +171,8 @@ class ObjectPropertiesProcessor:
     def _create_eigen_dict(self):
         eigen_dict = dict()
         for obj_type, object_dict in self.object_dict.items():
+            if obj_type not in ['cands', 'index']:
+                continue
             eigen_dict[obj_type] = dict()
             for file_ind, vertices in object_dict.items():
                 eigen_dict[obj_type][file_ind] = dict()
@@ -206,4 +214,3 @@ class ObjectPropertiesProcessor:
 
     def _get_num_vertices(self, vertices, object_type, file_ind):
         return len(vertices)
-

@@ -65,12 +65,12 @@ class PipelineManager:
         object_dict = defaultdict(dict)
         mapping_dict = defaultdict(dict)
         for objects_type, objects_path in objects_path_dict.items():
-            for file_ind, filename in enumerate(os.listdir(objects_path)):
-                filename = int(filename.split('.')[0])
-                json_data = read_json(objects_path, file_ind)
+            for file_ind, file_name in enumerate(os.listdir(objects_path)):
+                file_name = file_name.split('.')[0]
+                json_data = read_json(objects_path, file_name)
                 vertices = json_data['vertices']
                 object_dict[objects_type][file_ind] = close_polygon(vertices)
-                mapping_dict[objects_type][file_ind] = filename
+                mapping_dict[objects_type][file_ind] = file_name
             object_dict[objects_type] = dict(sorted(object_dict[objects_type].items()))
         object_dict['mapping_dict'] = mapping_dict
         return object_dict
