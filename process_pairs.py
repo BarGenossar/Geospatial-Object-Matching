@@ -11,30 +11,44 @@ from utils import get_feature_name_list
 class PairProcessor:
     def __init__(self, obj_att_vals, pairs_list):
         self.max_ratio_val = config.Constants.max_ratio_val
+        self.operator = config.Features.operator
         self.obj_att_vals = obj_att_vals
         self.pairs_list = pairs_list
-        self.feature_name_list = get_feature_name_list()
+        self.feature_name_list = get_feature_name_list(self.operator)
         self.feature_funcs_dict = self._get_feature_dict()
         self.feature_to_att_dict = self._get_feature_to_att_dict()
         self.feature_vec = self._create_feature_vectors()
 
     def _get_feature_dict(self):
-        # TODO: Add more feature types except for ratio
-        feature_dict = {feature: self._get_ratio for feature in self.feature_name_list if 'ratio' in feature}
-        return feature_dict
+        if self.operator == 'division':
+            return {feature: self._get_ratio for feature in self.feature_name_list}
+        elif self.operator == 'concatenation':
+            return {feature: self._get_feature_for_conc for feature in self.feature_name_list}
+        else:
+            raise ValueError(f"Operator {self.operator} is not supported")
 
     def _get_feature_to_att_dict(self):
-         # TODO: Add more feature types except for ratio
-        feature_to_att_dict = {feature: feature.split('_ratio')[0] for feature in
-                               self.feature_name_list if 'ratio' in feature}
-        return feature_to_att_dict
+        if self.operator == 'division':
+            return {feature: feature.split('_ratio')[0] for feature in self.feature_name_list}
+        elif self.operator == 'concatenation':
+            feature_to_att_dict = {feature: feature.split('_cand')[0] for feature in
+                                   self.feature_name_list if 'cand' in feature}
+            feature_to_att_dict.update({feature: feature.split('_index')[0] for feature in
+                                        self.feature_name_list if 'index' in feature})
+            return feature_to_att_dict
+        else:
+            raise ValueError(f"Operator {self.operator} is not supported")
 
     def _get_feature_vec(self, pair):
         # The convention is that the first object in the pair is the candidate and the second belongs to the index
         feature_vec = []
         for feature_name in self.feature_name_list:
             try:
-                feature_vec.append(min(self.max_ratio_val, self.feature_funcs_dict[feature_name](feature_name, pair)))
+                if self.operator == 'division':
+                    feature_vec.append(min(self.max_ratio_val,
+                                           self.feature_funcs_dict[feature_name](feature_name, pair)))
+                elif self.operator == 'concatenation':
+                    feature_vec.append(self.feature_funcs_dict[feature_name](feature_name, pair))
             except:
                 print(f'Error in feature {feature_name} for pair {pair}')
                 # feature_vec.append(np.nan)
@@ -52,4 +66,13 @@ class PairProcessor:
         cand_att_val = self.obj_att_vals[att_name]['cands'][pair[0]]
         index_att_val = self.obj_att_vals[att_name]['index'][pair[1]]
         return round(cand_att_val / index_att_val, 3)
+
+    def _get_feature_for_conc(self, feature_name, pair):
+        att_name = self.feature_to_att_dict[feature_name]
+        if 'cand' in feature_name:
+            return self.obj_att_vals[att_name]['cands'][pair[0]]
+        elif 'index' in feature_name:
+            return self.obj_att_vals[att_name]['index'][pair[1]]
+        else:
+            raise ValueError(f"Feature {feature_name} is not supported")
 
