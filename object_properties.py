@@ -21,14 +21,15 @@ class ObjectPropertiesProcessor:
         self.prop_names_dict = self._get_properties_dict()
         self._create_prop_vals_dict()
 
-    def _get_specific_coordinates(self, coordinate_index):
+    def _get_specific_coordinates(self, coord_index):
         specific_coord_dict = defaultdict(dict)
         for object_type, object_dict in self.object_dict.items():
             if object_type not in ['cands', 'index']:
                 continue
             for obj_ind, data in object_dict.items():
-                specific_coord_dict[object_type][obj_ind] = set([coord[coordinate_index] for surface in
-                                                                 data['polygon_mesh'] for coord in surface])
+                coords = np.unique(np.array([coord[coord_index] for surface in data['polygon_mesh']
+                                             for coord in surface]), axis=0)
+                specific_coord_dict[object_type][obj_ind] = coords
         return specific_coord_dict
 
     def _create_prop_vals_dict(self):
@@ -120,21 +121,21 @@ class ObjectPropertiesProcessor:
             area += 0.5 * np.linalg.norm(normal)
         return area
 
-    def _compute_lowest_polygon_perimeter(self, object_type, file_ind):
+    def _compute_specific_polygon_perimeter(self, object_type, file_ind, reference_point):
         """
         Compute the perimeter of the lowest polygon in the object.
 
         Parameters:
         - object_type: Type of the object (cands or index).
         - file_ind: Index of the object in the object dictionary.
+        - reference_point: Reference point to compute the perimeter (min_z or max_z).
 
         Returns:
-        - Perimeter of the lowest polygon in the object.
+        - Perimeter of the lowest/highest polygon in the object.
         """
-        min_z = min(self.z_coordinates[object_type][file_ind])
         perimeter = 0.0
         for polygon in self.object_dict[object_type][file_ind]['polygon_mesh']:
-            if all(vertex[2] == min_z for vertex in polygon):
+            if all(vertex[2] == reference_point for vertex in polygon):
                 for i in range(len(polygon)):
                     perimeter += np.linalg.norm(np.array(polygon[i]) - np.array(polygon[(i + 1) % len(polygon)]))
                 break
@@ -152,7 +153,12 @@ class ObjectPropertiesProcessor:
         - Perimeter of the object.
         """
         if file_ind not in self.prop_vals_dict['perimeter'][object_type].keys():
-            perimeter = self._compute_lowest_polygon_perimeter(object_type, file_ind)
+            min_z = min(self.z_coordinates[object_type][file_ind])
+            max_z = max(self.z_coordinates[object_type][file_ind])
+            perimeter = self._compute_specific_polygon_perimeter(object_type, file_ind, min_z)
+            if perimeter == 0.0:
+                perimeter = self._compute_specific_polygon_perimeter(object_type, file_ind, max_z)
+                perimeter = max(perimeter, 1)
             self.prop_vals_dict['perimeter'][object_type][file_ind] = perimeter
         else:
             perimeter = self.prop_vals_dict['perimeter'][object_type][file_ind]
@@ -181,6 +187,7 @@ class ObjectPropertiesProcessor:
                 for i in range(1, len(polygon) - 1):
                     triangle = [polygon[0], polygon[i], polygon[i + 1]]
                     volume += np.dot(triangle[0], np.cross(triangle[1], triangle[2])) / 6.0
+            volume = abs(volume)
             self.prop_vals_dict['volume'][object_type][obj_ind] = volume
         else:
             volume = self.prop_vals_dict['volume'][object_type][obj_ind]
