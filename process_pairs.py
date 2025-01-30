@@ -9,10 +9,10 @@ from utils import get_feature_name_list
 
 
 class PairProcessor:
-    def __init__(self, obj_att_vals, pairs_list):
+    def __init__(self, property_dict, pairs_list):
         self.max_ratio_val = config.Constants.max_ratio_val
         self.operator = config.Features.operator
-        self.obj_att_vals = obj_att_vals
+        self.property_dict = property_dict
         self.pairs_list = pairs_list
         self.feature_name_list = get_feature_name_list(self.operator)
         self.feature_funcs_dict = self._get_feature_dict()
@@ -63,16 +63,16 @@ class PairProcessor:
 
     def _get_ratio(self, feature_name, pair):
         att_name = self.feature_to_att_dict[feature_name]
-        cand_att_val = self.obj_att_vals[att_name]['cands'][pair[0]]
-        index_att_val = self.obj_att_vals[att_name]['index'][pair[1]]
+        cand_att_val = self.property_dict[att_name]['cands'][pair[0]]
+        index_att_val = self.property_dict[att_name]['index'][pair[1]]
         return round(cand_att_val / index_att_val, 3)
 
     def _get_feature_for_conc(self, feature_name, pair):
         att_name = self.feature_to_att_dict[feature_name]
         if 'cand' in feature_name:
-            return self.obj_att_vals[att_name]['cands'][pair[0]]
+            return self.property_dict[att_name]['cands'][pair[0]]
         elif 'index' in feature_name:
-            return self.obj_att_vals[att_name]['index'][pair[1]]
+            return self.property_dict[att_name]['index'][pair[1]]
         else:
             raise ValueError(f"Feature {feature_name} is not supported")
 

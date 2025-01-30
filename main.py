@@ -1,30 +1,23 @@
-import json
-import os
 import config
 from utils import *
-from blocking import Blocker
-from collections import defaultdict
-from process_pairs import PairProcessor
-from object_properties import ObjectPropertiesProcessor
-import numpy as np
-from sklearn.model_selection import train_test_split
-from classifier import FlexibleClassifier
-from pipelines import PipelineManagerClassicModels, PipelineManagerGNN
+from pipelines import PipelineManager
 import warnings
+
 warnings.filterwarnings("ignore")
 
 
 if __name__ == "__main__":
     logger = define_logger()
     print_config(logger)
-    model = config.Constants.model
+    final_result_dict = {}
+    run_prepahase = config.PreparatoryPhase.run_preparatory_phase
     for seed in range(1, config.Constants.seeds_num + 1):
         logger.info(f"Seed: {seed}")
         logger.info(3*'--------------------------')
-        if model == 'GNN':
-            PipelineManagerGNN(seed, logger)
-        else:
-            PipelineManagerClassicModels(seed, logger)
+        pipeline_manager_obj = PipelineManager(seed, logger, run_prepahase)
+        if config.Constants.evaluation_mode == 'matching':
+            final_result_dict[seed] = pipeline_manager_obj.flexible_classifier_obj.result_dict
+    generate_final_result_csv(final_result_dict, logger)
     logger.info("Done!")
 
 
