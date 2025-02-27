@@ -10,35 +10,34 @@ class FilePaths:
 class Constants:
     dataset_name = "gpkg"
     synthetic_folder_name = "example"  # Relevant only if dataset_name is "synthetic"
-    evaluation_mode = "blocking"  # "blocking", "matching", "end2end"
+    evaluation_mode = "matching"  # "blocking", "matching", "end2end"
     seeds_num = 1
     train_ratio = 0.6
     val_ratio = 0.2
     test_ratio = 1 - train_ratio - val_ratio
     max_ratio_val = 1000  # Avoid infinity values
-    load_object_dict = False  # Load existing object dictionary
+    load_object_dict = True  # Load existing object dictionary
     save_object_dict = True  # Save the object dictionary
-    load_prep_items = False  # Load existing preparatory items
+    load_train_items = True  # Load existing preparatory items
     save_property_dict = True  # Save the properties dictionary
-    load_property_dict = False  # Load the properties dictionary
+    load_property_dict = True  # Load the properties dictionary
     save_dataset_dict = True  # save the dataset dictionary
-    load_dataset_dict = False  # load existing dataset dictionary
+    load_dataset_dict = True  # load existing dataset dictionary
     file_name_suffix = "300125"  # If set to None, the current exact time will be used
 
 
-class PreparatoryPhase:
-    pos_pairs_num = 1000  # Number of positive samples
-    neg_pairs_ratio = 1  # Number of negative samples per positive sample
-    run_preparatory_phase = False  # If False, the preparatory phase will not be run
-    load_pairs = False  # Load existing pairs
+class TrainingPhase:
+    pos_pairs_num = 1500  # Number of positive samples
+    neg_pairs_ratio = 4  # Number of negative samples per positive sample
+    run_preparatory_phase = True  # If False, the preparatory phase will not be run
 
 
 class Blocking:
-    blocking_method = 'exhaustive'  # 'exhaustive', 'lsh', 'kdtree', 'bkafi'
-    nn_param = 10  # number of nearest neighbors to retrieve as candidates
-    cand_pairs = 2  # total number of candidate pairs to retrieve for each candidate object
+    blocking_method = 'bkafi'  # 'exhaustive', 'lsh', 'kdtree', 'bkafi'
+    nn_param = 52  # number of nearest neighbors to retrieve as candidates
+    cand_pairs_per_item_list = [5*i for i in range(1, 11)]  # total number of candidate pairs to retrieve for each candidate object
     nbits = 10  # number of bits to use for LSH
-    bkafi_dim = 3  # Number of important features to use for blocking (for the bkafi method)
+    bkafi_dim_list = [3]  # Number of important features to use for blocking (for the bkafi method)
     dist_threshold = None  # Define it as a hyperparameter or in a flexible manner
 
 
@@ -65,8 +64,8 @@ class Models:
     model_to_use = 'XGBClassifier'  # Used only for predict.py and feature_importances.py
     # model_list = ['RandomForestClassifier', 'SVC', 'LogisticRegression', 'AdaBoostClassifier',
     #               'GradientBoostingClassifier', 'BaggingClassifier', 'XGBClassifier']
-    model_list = ['XGBClassifier']
-    prep_model = ['XGBClassifier']  # Used only for preparatory phase. Use a list containing a single model
+    model_list = ['RandomForestClassifier','AdaBoostClassifier']
+    blocking_model = 'RandomForestClassifier'  # Used only for blocking and for advanced evaluation
     params_dict = {
                     'RandomForestClassifier': {"n_estimators": [50, 100, 200],
                                                "max_depth": [5, 10],

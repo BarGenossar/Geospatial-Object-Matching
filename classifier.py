@@ -19,7 +19,7 @@ from utils import get_feature_name_list, get_file_name, load_property_dict
 
 
 class FlexibleClassifier:
-    def __init__(self, dataset_dict, params_dict, seed, logger, prep_mode, load_trained_models=False, cv=5):
+    def __init__(self, dataset_dict, params_dict, seed, logger, train_mode, load_trained_models=False, cv=5):
         self.dataset_dict = dataset_dict
         self.params_dict = params_dict
         self.seed = seed
@@ -27,7 +27,7 @@ class FlexibleClassifier:
         self.cv = cv
         self.models_path = config.FilePaths.saved_models_path
         self.logger = logger
-        self.prep_mode = prep_mode
+        self.train_mode = train_mode
         self.model_dict = self._get_model_dict()
         self.file_name = get_file_name()
         self.scorer = make_scorer(f1_score, average='macro')
@@ -48,8 +48,8 @@ class FlexibleClassifier:
         return model_dict
 
     def _save_model(self, model, model_name):
-        general_file_name = self.file_name if not self.prep_mode else f"prep_model_{self.file_name}"
-        prep_mode_message = "" if not self.prep_mode else "(prep mode)"
+        general_file_name = self.file_name if not self.train_mode else f"prep_model_{self.file_name}"
+        prep_mode_message = "" if not self.train_mode else "(prep mode)"
         if not os.path.exists(self.models_path[:-1]):
             os.makedirs(self.models_path[:-1])
         try:
@@ -62,8 +62,8 @@ class FlexibleClassifier:
             logging.error(f"Error happened while saving model {model_name}{prep_mode_message}: {e}")
 
     def _load_model(self, model_name):
-        general_file_name = self.file_name if not self.prep_mode else f"prep_model_{self.file_name}"
-        prep_mode_message = "" if not self.prep_mode else "(prep mode)"
+        general_file_name = self.file_name if not self.train_mode else f"prep_model_{self.file_name}"
+        prep_mode_message = "" if not self.train_mode else "(prep mode)"
         try:
             model = joblib.load(f'{self.models_path}{model_name}_{general_file_name}_seed{self.seed}.joblib')
             logging.info(f"Model {model_name} was loaded successfully")
@@ -75,7 +75,8 @@ class FlexibleClassifier:
             print(f"Error happened while loading model {model_name}: {e}. Starting training...")
             return None
 
-    def _get_final_feature_name_list(self):
+    @staticmethod
+    def _get_final_feature_name_list():
         operator = config.Features.operator
         feature_name_list = get_feature_name_list(operator)
         # shape_features = config.Features.shape
@@ -102,7 +103,7 @@ class FlexibleClassifier:
 
     def _train_and_evaluate_all_models(self):
         result_dict = defaultdict(dict)
-        best_model_dict = defaultdict
+        best_model_dict = defaultdict(dict)
         for model_name, model_params in self.params_dict.items():
             try:
                 best_model_dict[model_name], result_dict = self._train_and_evaluate_model(result_dict,
@@ -124,13 +125,18 @@ class FlexibleClassifier:
 
     def _train_and_evaluate_model(self, result_dict, model_name, params):
         best_model = self._get_best_model(model_name, params)
-        x_test = self.dataset_dict['test']['X'] if not self.prep_mode else self.dataset_dict['prep']['X']
-        y_test_preds = best_model.predict(x_test)
-        result_dict = self._insert_results_to_dict(result_dict, model_name, y_test_preds)
-        return best_model, result_dict
+        feature_name_list = self._get_final_feature_name_list()
+        if self.train_mode:
+            result_dict = None
+        else:
+            x_test = self.dataset_dict['test']['X'] if not self.train_mode else None
+            y_test_preds = best_model.predict(x_test)
+            result_dict = self._insert_results_to_dict(result_dict, model_name, y_test_preds)
+        return {'model': best_model, 'feature_name_list': feature_name_list}, result_dict
 
     def _get_y_train(self, model_name):
-        y_train = self.dataset_dict['train']['Y'] if self.prep_mode is not True else self.dataset_dict['prep']['Y']
+        # y_train = self.dataset_dict['train']['Y'] if self.train_mode is not True else self.dataset_dict['prep']['Y']
+        y_train = self.dataset_dict['train']['Y']
         if model_name == 'XGBClassifier':
             le = LabelEncoder()
             return le.fit_transform(y_train)
@@ -138,7 +144,12 @@ class FlexibleClassifier:
             return y_train
 
     def _train_model(self, model_name, model, params):
-        x_train = self.dataset_dict['train']['X'] if self.prep_mode is not True else self.dataset_dict['prep']['X']
+        # x_train = self.dataset_dict['train']['X'] if self.train_mode is not True else self.dataset_dict['prep']['X']
+
+        if 'train' not in self.dataset_dict.keys():
+            raise ValueError("You first need to run the code with "
+                             "config.TrainingPhase.run_preparatory_phase = True")
+        x_train = self.dataset_dict['train']['X']
         y_train = self._get_y_train(model_name)
         self.logger.info(f"Training model {model.__class__.__name__}...")
         grid_search = GridSearchCV(model, params, cv=self.cv, scoring=self.scorer)
@@ -147,17 +158,22 @@ class FlexibleClassifier:
         return best_model
 
     def _insert_results_to_dict(self, result_dict, model_name, y_test_preds, y_prediction_file=None):
-        Y_test = self.dataset_dict['test']['Y'] if not self.prep_mode else self.dataset_dict['prep']['Y']
-        result_dict[model_name]['precision'] = precision_score(Y_test, y_test_preds, average='binary')
-        result_dict[model_name]['recall'] = recall_score(Y_test, y_test_preds, average='binary')
-        result_dict[model_name]['f1'] = f1_score(Y_test, y_test_preds, average='binary')
+        # Y_test = self.dataset_dict['test']['Y'] if not self.train_mode else self.dataset_dict['prep']['Y']
+        y_test = self.dataset_dict['test']['Y']
+        result_dict[model_name]['precision'] = precision_score(y_test, y_test_preds, average='binary')
+        result_dict[model_name]['recall'] = recall_score(y_test, y_test_preds, average='binary')
+        result_dict[model_name]['f1'] = f1_score(y_test, y_test_preds, average='binary')
         # result_dict[model_name]['confusion_matrix'] = confusion_matrix(Y_test, y_test_preds)
         return result_dict
 
     def _print_results(self):
-        prep_mode_message = "" if not self.prep_mode else "(prep mode)"
+        # prep_mode_message = "" if not self.train_mode else "(prep mode)"
+        if self.train_mode:
+            self.logger.info("Training phase has ended")
+            return
         for model_name, model_results in self.result_dict.items():
-            self.logger.info(f"Results for model {model_name}{prep_mode_message}:")
+            # self.logger.info(f"Results for model {model_name}{prep_mode_message}:")
+            self.logger.info(f"Results for model {model_name}:")
             self.logger.info(f"Precision: {round(model_results['precision'], 3)}")
             self.logger.info(f"Recall: {round(model_results['recall'], 3)}")
             self.logger.info(f"F1 score: {round(model_results['f1'], 3)}")
@@ -181,8 +197,8 @@ class FlexibleClassifier:
             feature_name_list = self.best_model_dict[model_name]['feature_name_list']
             sorted_importance_scores = sorted(zip(feature_name_list, best_model.feature_importances_),
                                               key=lambda x: x[1], reverse=True)
-            self._save_feature_importance_scores(model_name, sorted_importance_scores)
             self._print_feature_importance_scores(sorted_importance_scores)
+            self._save_feature_importance_scores(model_name, sorted_importance_scores)
             feature_importance_dict[model_name] = sorted_importance_scores
         self.logger.info(3 * '*******************************************')
         self.logger.info(3 * '*******************************************')
@@ -190,7 +206,7 @@ class FlexibleClassifier:
 
     def _save_feature_importance_scores(self, model_name, sorted_importance_scores):
         general_file_name = ''.join((self.file_name, '_feature_importance_scores'))
-        feature_importance_file_name = f'{self.models_path}{model_name}_{general_file_name}_{self.seed}.joblib'
+        feature_importance_file_name = f'{self.models_path}{model_name}_{general_file_name}_seed={self.seed}.joblib'
         joblib.dump(sorted_importance_scores, feature_importance_file_name)
         self.logger.info(f"Feature importance scores were saved successfully")
         self.logger.info('')
@@ -216,7 +232,7 @@ class FlexibleClassifier:
 
     def _save_property_ratios(self, property_ratios):
         general_file_name = ''.join((self.file_name, '_property_ratios'))
-        property_ratios_file_name = f'{self.models_path}{general_file_name}_{self.seed}.joblib'
+        property_ratios_file_name = f'{self.models_path}{general_file_name}_seed={self.seed}.joblib'
         joblib.dump(property_ratios, property_ratios_file_name)
         self.logger.info(f"Matching pairs property ratios were saved successfully")
         self.logger.info('')
