@@ -27,7 +27,7 @@ class Constants:
 
 
 class TrainingPhase:
-    pos_pairs_num = 1500  # Number of positive samples
+    training_ratio = 0.5  # Number of positive samples
     neg_pairs_ratio = 4  # Number of negative samples per positive sample
     run_preparatory_phase = True  # If False, the preparatory phase will not be run
 
@@ -62,9 +62,8 @@ class Models:
     load_trained_models = False
     cv = 3
     model_to_use = 'XGBClassifier'  # Used only for predict.py and feature_importances.py
-    # model_list = ['RandomForestClassifier', 'SVC', 'LogisticRegression', 'AdaBoostClassifier',
-    #               'GradientBoostingClassifier', 'BaggingClassifier', 'XGBClassifier']
-    model_list = ['RandomForestClassifier','AdaBoostClassifier']
+    model_list = ['RandomForestClassifier', 'SVC', 'LogisticRegression', 'AdaBoostClassifier',
+                  'GradientBoostingClassifier', 'BaggingClassifier', 'XGBClassifier']
     blocking_model = 'RandomForestClassifier'  # Used only for blocking and for advanced evaluation
     params_dict = {
                     'RandomForestClassifier': {"n_estimators": [50, 100, 200],

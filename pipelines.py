@@ -27,7 +27,7 @@ class PipelineManager:
         # self.pos_indices_train, self.pos_indices_test = None, None
         self.train_feature_importance_scores, self.train_property_ratios = None, None
         self.dataset_dict = self._create_dataset_dict()
-        self.flexible_classifier_obj = self._train_and_evaluate(self.dataset_dict, prep_mode=False)
+        self.flexible_classifier_obj = self._train_and_evaluate(self.dataset_dict, train_or_test='test')
         self.result_dict = self._get_result_dict()
 
     def _read_objects(self):
@@ -45,7 +45,7 @@ class PipelineManager:
     def _load_object_dict_wrapper(self, dataset_config):
         test_object_dict, train_object_dict = None, None
         object_dict_path = dataset_config['object_dict_path']
-        train_object_dict_path = object_dict_path.replace('object_dict', 'train_object_dict')
+        train_object_dict_path = object_dict_path.replace('test', 'train')
         if config.Constants.load_object_dict:
             test_object_dict = load_object_dict(self.logger, object_dict_path, 'test_object_dict')
             train_object_dict = load_object_dict(self.logger, train_object_dict_path, 'train_object_dict')
@@ -71,13 +71,13 @@ class PipelineManager:
 
         """
         np.random.seed(self.seed)
-        cands_ids = list(test_object_dict['cands'].keys())
+        cands_ids = set(test_object_dict['cands'].keys())
         index_ids = set(test_object_dict['index'].keys())
-        pos_samples_num = config.TrainingPhase.pos_pairs_num
-        intersection_list = list(set(cands_ids).intersection(index_ids))
-        train_ids = set(np.random.choice(intersection_list, pos_samples_num, replace=False))
-        train_object_dict = {'cands': {object_id: test_object_dict['cands'][object_id] for object_id in train_ids},
-                            'index': {object_id: test_object_dict['index'][object_id] for object_id in train_ids}}
+        pos_samples_num = int(config.TrainingPhase.training_ratio * len(cands_ids))
+        intersection_set = cands_ids.intersection(index_ids)
+        train_ids = set(np.random.choice(list(cands_ids), pos_samples_num, replace=False))
+        train_object_dict = test_object_dict.copy()
+        train_object_dict['cands'] = {object_id: test_object_dict['cands'][object_id] for object_id in train_ids}
         test_object_dict = self._remove_train_objects_from_object_dict(test_object_dict, train_ids)
         return test_object_dict, train_object_dict
 
@@ -210,14 +210,36 @@ class PipelineManager:
         neg_pairs = [(cand_id, index_id) for cand_id, index_id in neg_pairs if cand_id != index_id]
         return pos_pairs, neg_pairs
 
+    def _run_blocker_training(self):
+        self.logger.info(f"Running blocking for training phase")
+        dummy_feature_importance_scores = self._get_dummy_feature_importance_scores()
+        dummy_property_ratios = self._get_dummy_property_ratios()
+        blocker = Blocker(self.train_object_dict, self.train_property_dict, dummy_feature_importance_scores,
+                          dummy_property_ratios, 'bkafi', 'train')
+        self.logger.info(f"The blocking process for the training phase ended successfully")
+        self.train_pos_pairs_dict, self.train_neg_pairs_dict = blocker.pos_pairs_dict, blocker.neg_pairs_dict
+        save_blocking_output(self.train_pos_pairs_dict, self.train_neg_pairs_dict, self.seed, self.logger, 'train')
+        return
+
+    @staticmethod
+    def _get_dummy_feature_importance_scores():
+        feature_names = get_feature_name_list(config.Features.operator)
+        dummy_model_name = config.Models.blocking_model
+        return {dummy_model_name: [(feature, 1) for feature in feature_names]}
+
+    def _get_dummy_property_ratios(self):
+        property_ratios = {prop: {'mean': 1.0, 'std': 0.0}
+                           for prop in self.train_property_dict.keys()}
+        return property_ratios
+
     def _run_blocker(self):
         blocking_method = config.Blocking.blocking_method
         self.logger.info(f"Running blocking method {blocking_method}")
         blocker = Blocker(self.test_object_dict, self.test_property_dict, self.train_feature_importance_scores,
-                          self.train_property_ratios, self.blocking_method)
+                          self.train_property_ratios, self.blocking_method, 'test')
         self.logger.info(f"The blocking process ended successfully")
         self.test_pos_pairs_dict, self.test_neg_pairs_dict = blocker.pos_pairs_dict, blocker.neg_pairs_dict
-        save_blocking_output(self.test_pos_pairs_dict, self.test_neg_pairs_dict, self.seed, self.logger)
+        save_blocking_output(self.test_pos_pairs_dict, self.test_neg_pairs_dict, self.seed, self.logger, 'test')
         if self.evaluation_mode == 'blocking':
             self.result_dict = self._evaluate_blocking()
         return
@@ -254,13 +276,15 @@ class PipelineManager:
         if dataset_dict is not None:
             return dataset_dict
         self.test_object_dict, self.train_object_dict = self._read_objects()
-        self.training_pos_pairs, self.training_neg_pairs = self._generate_training_pairs()
+        self.train_property_dict = self._generate_property_dict('train')
+        self._run_blocker_training()
+        self.train_pos_pairs, self.train_neg_pairs = self._get_pos_and_neg_pairs('train')
         self.train_feature_importance_scores, self.train_property_ratios, dataset_dict = self._run_train_pipeline()
-        self.test_property_dict = self._generate_property_dict()
+        self.test_property_dict = self._generate_property_dict('test')
         self._run_blocker()
         if self.evaluation_mode == "blocking":
             return
-        self.pos_pairs, self.neg_pairs = self._get_pos_and_neg_pairs_for_matching()
+        self.pos_pairs, self.neg_pairs = self._get_pos_and_neg_pairs('test')
         # self._split_data()
         feature_dict = self._generate_feature_dict()
         dataset_dict = self._create_final_dict(dataset_dict, feature_dict)
@@ -276,56 +300,70 @@ class PipelineManager:
                 return dataset_dict
         return dataset_dict
 
-    def _get_pos_and_neg_pairs_for_matching(self):
-        """
-        Get the positive and negative pairs for the matching phase. The pairs are taken from the blocking phase.
-        We get to this function only if the evaluation mode is not 'blocking'.
-        Returns:
-            pos_pairs (list): The positive pairs for the matching phase.
-            neg_pairs (list): The negative pairs for the matching phase.
-        """
-        bkafi_dim = min(self.test_pos_pairs_dict.keys())
+    def _get_pos_and_neg_pairs_for_training(self):
+        bkafi_dim = min(self.train_pos_pairs_dict.keys())
         cand_pairs_per_item = min(self.test_pos_pairs_dict[bkafi_dim].keys())
-        pos_pairs = self.test_pos_pairs_dict[bkafi_dim][cand_pairs_per_item]
-        neg_pairs = self.test_neg_pairs_dict[bkafi_dim][cand_pairs_per_item]
+        pos_pairs = self.train_pos_pairs_dict[bkafi_dim][cand_pairs_per_item]
+        neg_pairs = self.train_neg_pairs_dict[bkafi_dim][cand_pairs_per_item]
+        return pos_pairs, neg_pairs
+
+    def _get_pos_and_neg_pairs(self, train_or_test):
+        pos_pairs_dict = self.test_pos_pairs_dict if train_or_test == 'test' else self.train_pos_pairs_dict
+        neg_pairs_dict = self.test_neg_pairs_dict if train_or_test == 'test' else self.train_neg_pairs_dict
+        bkafi_dim = min(pos_pairs_dict.keys())
+        cand_pairs_per_item = min(pos_pairs_dict[bkafi_dim].keys())
+        pos_pairs = pos_pairs_dict[bkafi_dim][cand_pairs_per_item]
+        neg_pairs = neg_pairs_dict[bkafi_dim][cand_pairs_per_item]
         return pos_pairs, neg_pairs
 
     def _run_train_pipeline(self):
         feature_importance_dict = None
         train_property_ratios = None
         if config.Constants.load_train_items:
-            feature_importance_scores, matching_pairs_property_ratios = self._load_train_items()
+            feature_importance_dict, matching_pairs_property_ratios = self._load_train_items()
             dataset_dict = load_dataset_dict(self.logger, self.seed)
-            if (feature_importance_scores is not None and matching_pairs_property_ratios is not None
+            if (feature_importance_dict is not None and matching_pairs_property_ratios is not None
                     and dataset_dict is not None):
-                return feature_importance_scores, matching_pairs_property_ratios, dataset_dict
+                return feature_importance_dict, matching_pairs_property_ratios, dataset_dict
         train_feature_dict = self._generate_train_feature_dict()
         dataset_dict = self._create_train_final_dict(train_feature_dict)
         if self.with_prep_training:
-            flexible_classifier_obj = self._train_and_evaluate(dataset_dict, prep_mode=True)
+            flexible_classifier_obj = self._train_and_evaluate(dataset_dict, 'train')
             feature_importance_dict = flexible_classifier_obj.feature_importance_extraction()
-            train_property_ratios = flexible_classifier_obj.get_property_ratios(prep_mode=True)
+            train_property_ratios = flexible_classifier_obj.get_property_ratios('train')
         return feature_importance_dict, train_property_ratios, dataset_dict
 
     def _load_train_items(self):
         feature_importance_dict, matching_pairs_property_ratios = None, None
         try:
-            feature_importance_dict = load_feature_importance_scores(self.seed, self.logger)
+            feature_importance_dict = load_feature_importance_dict(self.seed, self.logger)
             matching_pairs_property_ratios = load_property_ratios(self.seed, self.logger)
         except:
             self.logger.info("Could not load training phase items. Running training phase pipeline")
         return feature_importance_dict, matching_pairs_property_ratios
 
-    def _generate_property_dict(self):
+    # def _generate_test_property_dict(self):
+    #     if config.Constants.load_property_dict:
+    #         property_dict = load_property_dict(self.logger, self.seed, train_mode_name=False)
+    #         if property_dict is not None:
+    #             return property_dict
+    #     self.logger.info("Generating property dictionary")
+    #     obj_prop_vals = ObjectPropertiesProcessor(self.test_object_dict).prop_vals_dict
+    #     if config.Constants.save_property_dict:
+    #         save_property_dict(obj_prop_vals, self.seed, self.logger, train_mode_name=False)
+    #     return obj_prop_vals
+
+    def _generate_property_dict(self, train_or_test):
+        rel_object_dict = self.train_object_dict if train_or_test == 'train' else self.test_object_dict
         if config.Constants.load_property_dict:
-            property_dict = load_property_dict(self.logger, self.seed, train_mode_name=False)
+            property_dict = load_property_dict(self.logger, self.seed, train_or_test)
             if property_dict is not None:
                 return property_dict
-        self.logger.info("Generating property dictionary")
-        obj_prop_vals = ObjectPropertiesProcessor(self.test_object_dict).prop_vals_dict
+        self.logger.info(f"Generating {train_or_test} property dictionary")
+        property_dict = ObjectPropertiesProcessor(rel_object_dict).prop_vals_dict
         if config.Constants.save_property_dict:
-            save_property_dict(obj_prop_vals, self.seed, self.logger, train_mode_name=False)
-        return obj_prop_vals
+            save_property_dict(property_dict, self.seed, self.logger, train_or_test)
+        return property_dict
 
     def _generate_feature_dict(self):
         feature_dict = defaultdict(dict)
@@ -336,13 +374,9 @@ class PipelineManager:
 
     def _generate_train_feature_dict(self):
         train_feature_dict = defaultdict(dict)
-        self.logger.info("Generating training phase property dictionary")
-        train_obj_prop_vals = ObjectPropertiesProcessor(self.train_object_dict).prop_vals_dict
-        if config.Constants.save_property_dict:
-            save_property_dict(train_obj_prop_vals, self.seed, self.logger, train_mode_name=True)
         self.logger.info("Generating training phase feature vectors")
-        for label, pairs_list in zip([0, 1], [self.training_neg_pairs, self.training_pos_pairs]):
-            train_feature_dict[label] = PairProcessor(train_obj_prop_vals, pairs_list).feature_vec
+        for label, pairs_list in zip([0, 1], [self.train_neg_pairs, self.train_pos_pairs]):
+            train_feature_dict[label] = PairProcessor(self.train_property_dict, pairs_list).feature_vec
         return train_feature_dict
 
     def _create_final_dict(self, dataset_dict, feature_dict):
@@ -359,7 +393,7 @@ class PipelineManager:
         dataset_dict = defaultdict(dict)
         np.random.seed(self.seed)
         merged_features = feature_dict[0] + feature_dict[1]
-        labels = [0] * len(self.training_neg_pairs) + [1] * len(self.training_pos_pairs)
+        labels = [0] * len(self.train_neg_pairs) + [1] * len(self.train_pos_pairs)
         dataset_dict = self._prepare_dataset(dataset_dict, 'train', merged_features, labels)
         if config.Constants.save_dataset_dict:
             save_dataset_dict(dataset_dict, self.seed, self.logger)
@@ -375,8 +409,8 @@ class PipelineManager:
     #     return merged_train, merged_test
 
     def _merge_train_features(self, feature_dict):
-        neg_pairs = [feature_dict[0][ind] for ind in self.training_neg_pairs]
-        pos_pairs = [feature_dict[1][ind] for ind in self.training_pos_pairs]
+        neg_pairs = [feature_dict[0][ind] for ind in self.train_neg_pairs]
+        pos_pairs = [feature_dict[1][ind] for ind in self.train_pos_pairs]
         merged_features = neg_pairs + pos_pairs
         return merged_features
 
@@ -388,19 +422,19 @@ class PipelineManager:
         dataset_dict[file_type]['Y'] = np.array([elem[1] for elem in combined])
         return dataset_dict
 
-    def _train_and_evaluate(self, rel_dataset_dict, prep_mode=False):
-        if self.evaluation_mode == 'blocking' and prep_mode is False:
+    def _train_and_evaluate(self, rel_dataset_dict, train_or_test):
+        if self.evaluation_mode == 'blocking' and train_or_test == 'train':
             return None
-        params_dict = self._read_config_models(prep_mode)
+        params_dict = self._read_config_models(train_or_test)
         load_trained_models = config.Models.load_trained_models
         cv = config.Models.cv
         flexible_classifier = FlexibleClassifier(rel_dataset_dict, params_dict, self.seed,
-                                                 self.logger, prep_mode, load_trained_models, cv)
+                                                 self.logger, train_or_test, load_trained_models, cv)
         return flexible_classifier
 
     @staticmethod
-    def _read_config_models(prep_mode):
-        model_list = config.Models.model_list if not prep_mode else [config.Models.blocking_model]
+    def _read_config_models(train_or_test):
+        model_list = config.Models.model_list if train_or_test == 'test' else [config.Models.blocking_model]
         params_dict = dict()
         for model in model_list:
             params_dict[model] = config.Models.params_dict[model]

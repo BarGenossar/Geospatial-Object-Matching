@@ -8,7 +8,8 @@ from scipy.spatial import KDTree
 
 
 class Blocker:
-    def __init__(self, object_dict, property_dict, feature_importance_scores, property_ratios, blocking_method):
+    def __init__(self, object_dict, property_dict, feature_importance_scores, property_ratios,
+                 blocking_method, train_or_test):
         self.blocking_method = blocking_method
         self.nn_param = config.Blocking.nn_param
         self.cand_pairs_per_item_list = config.Blocking.cand_pairs_per_item_list
@@ -18,6 +19,7 @@ class Blocker:
         self.property_dict = property_dict
         self.feature_importance_scores = feature_importance_scores
         self.property_ratios = property_ratios
+        self.train_or_test = train_or_test
         self.centroids_dict = self._get_centroids()
         self.cands_mapping = {ind: orig_ind for ind, orig_ind in enumerate(self.object_dict['cands'].keys())}
         self.index_mapping = {ind: orig_ind for ind, orig_ind in enumerate(self.object_dict['index'].keys())}
@@ -85,6 +87,8 @@ class Blocker:
         return nn_dict, dists_dict
 
     def _run_bkafi(self):
+        if self.train_or_test == 'train':
+            return self._run_bkafi_train()
         nn_dict, dists_dict = {}, {}
         model_name = config.Models.blocking_model
         for bkafi_dim in self.bkafi_dim_list:
@@ -92,6 +96,16 @@ class Blocker:
                                         for feature, _ in self.feature_importance_scores[model_name][:bkafi_dim]}
             bkafi_dict = self._get_bkafi_dict(target_blocking_features)
             nn_dict[bkafi_dim], dists_dict[bkafi_dim] = self._run_kdtree(bkafi_dict)
+        return nn_dict, dists_dict
+
+    def _run_bkafi_train(self):
+        nn_dict, dists_dict = {}, {}
+        model_name = config.Models.blocking_model
+        bkafi_dim = len(self.feature_importance_scores[model_name])
+        target_blocking_features = {feature: self.property_ratios[feature.split('_ratio')[0]]
+                                    for feature, _ in self.feature_importance_scores[model_name][:bkafi_dim]}
+        bkafi_dict = self._get_bkafi_dict(target_blocking_features)
+        nn_dict[bkafi_dim], dists_dict[bkafi_dim] = self._run_kdtree(bkafi_dict)
         return nn_dict, dists_dict
 
     def _get_bkafi_dict(self, target_blocking_features):
@@ -124,10 +138,14 @@ class Blocker:
     def _get_candidate_pairs(self):
         # todo: Support more complex cases of candidate pairs creation such as conditions on the distance of the
         #  negative pairs
+        if self.train_or_test == 'train':
+            cand_pairs_per_item_list = [self.cand_pairs_per_item_list[0]]
+        else:
+            cand_pairs_per_item_list = self.cand_pairs_per_item_list
         pos_pairs_dict, neg_pairs_dict = defaultdict(dict), defaultdict(dict)
         local_mapping_dict = self._get_local_mapping_dict()
-        for bkafi_dim in self.bkafi_dim_list:
-            for list_ind, cand_pairs_per_item in enumerate(self.cand_pairs_per_item_list):
+        for bkafi_dim in self.nn_dict.keys():
+            for list_ind, cand_pairs_per_item in enumerate(cand_pairs_per_item_list):
                 if list_ind == 0:
                     pos_pairs_dict[bkafi_dim][cand_pairs_per_item] = []
                     neg_pairs_dict[bkafi_dim][cand_pairs_per_item] = []
