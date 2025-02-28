@@ -257,8 +257,8 @@ def generate_final_result_csv(result_dict, evaluation_mode, blocking_method):
 
 def generate_final_results_matching(result_dict, final_res_dict, results_path, file_name):
     file_path = f"{results_path}FinalResults_{file_name}_matching.csv"
-    for model_name, model_dict in result_dict[1].items():
-        for metric in model_dict[1]['matching'][model_name].keys():
+    for model_name, model_dict in result_dict[1]['matching'].items():
+        for metric in model_dict.keys():
             final_res_dict[model_name] = {}
             metric_res_list = []
             for seed in result_dict.keys():
@@ -273,7 +273,7 @@ def generate_final_results_blocking(result_dict, final_res_dict, results_path, f
     file_path = f"{results_path}FinalResults_{file_name}_blocking.csv"
     if "bkafi" in blocking_method:
         for bkafi_dim in config.Blocking.bkafi_dim_list:
-            for metric in result_dict[1][bkafi_dim].keys():
+            for metric in result_dict[1]['blocking'][bkafi_dim].keys():
                 final_res_dict[f'{bkafi_dim}'] = {}
                 metric_res_list = []
                 for seed in result_dict.keys():
