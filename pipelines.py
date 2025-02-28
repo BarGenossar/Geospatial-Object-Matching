@@ -52,9 +52,13 @@ class PipelineManager:
         return test_object_dict, train_object_dict
 
     def _save_object_dicts(self, test_object_dict, train_object_dict, dataset_config):
-        self.logger.info(f"Saving object dicts to {dataset_config['object_dict_path']}")
+        print(f"Number of cands in train: {len(train_object_dict['cands'])}")
+        print(f"Number of index in train: {len(train_object_dict['index'])}")
+        print(f"Number of cands in test: {len(test_object_dict['cands'])}")
+        print(f"Number of index in test: {len(test_object_dict['index'])}")
+        self.logger.info(f"Saving test object dict")
         joblib.dump(test_object_dict, dataset_config['object_dict_path'])
-        self.logger.info(f"Saving train object dict to {dataset_config['object_dict_path']}")
+        self.logger.info(f"Saving train object dict")
         train_object_dict_path = dataset_config['object_dict_path'].replace('test', 'train')
         joblib.dump(train_object_dict, train_object_dict_path)
         return
@@ -175,9 +179,18 @@ class PipelineManager:
                 for obj_key in data['CityObjects'].keys():
                     try:
                         new_obj_key = standardize_obj_key(obj_key, objects_type)
-                        object_dict[objects_type][new_obj_key] = self._get_polygon_mesh(data, obj_key, vertices)
+                        polygon_mesh_data = self._get_polygon_mesh(data, obj_key, vertices)
+                        if polygon_mesh_data is not None:
+                            object_dict[objects_type][new_obj_key] = polygon_mesh_data
                     except:
                         continue
+        intersection_keys = set(object_dict['cands'].keys()).intersection(set(object_dict['index'].keys()))
+        object_dict['cands'] = {obj_key: object_dict['cands'][obj_key] for obj_key in intersection_keys}
+        object_dict['index'] = {obj_key: object_dict['index'][obj_key] for obj_key in intersection_keys}
+        # print the len of the objects
+        print(f"Number of cands: {len(object_dict['cands'])}")
+        print(f"Number of index: {len(object_dict['index'])}")
+        for objects_type in objects_path_dict.keys():
             object_dict['mapping_dict'][objects_type] = {ind: obj_key for ind, obj_key in
                                                          enumerate(object_dict[objects_type].keys())}
             object_dict['inv_mapping_dict'][objects_type] = {obj_key: ind for ind, obj_key in
@@ -256,10 +269,9 @@ class PipelineManager:
                 blocking_recall = round(len(pos_pairs) / len(max_intersection), 3)
                 total_pairs = len(pos_pairs) + len(neg_pairs)
                 blocking_res_dict[bkafi_dim][cand_pairs_per_item] = {'blocking_recall': blocking_recall,
-                                                                     'total_pairs': total_pairs}
+                                                                     'k': cand_pairs_per_item}
                 self.logger.info(f"Blocking recall for bkafi_dim {bkafi_dim} and cand_pairs_per_item "
                                  f"{cand_pairs_per_item}: {blocking_recall}")
-                self.logger.info(f"Total pairs: {total_pairs}")
                 self.logger.info(3*'- - - - - - - - - - - - -')
         save_blocking_evaluation(blocking_res_dict, self.seed, self.logger)
         return blocking_res_dict
@@ -423,8 +435,8 @@ class PipelineManager:
         return dataset_dict
 
     def _train_and_evaluate(self, rel_dataset_dict, train_or_test):
-        if self.evaluation_mode == 'blocking' and train_or_test == 'train':
-            return None
+        # if self.evaluation_mode == 'blocking' and train_or_test == 'train':
+        #     return None
         params_dict = self._read_config_models(train_or_test)
         load_trained_models = config.Models.load_trained_models
         cv = config.Models.cv

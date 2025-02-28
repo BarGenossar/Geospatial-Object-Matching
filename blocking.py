@@ -143,7 +143,7 @@ class Blocker:
         else:
             cand_pairs_per_item_list = self.cand_pairs_per_item_list
         pos_pairs_dict, neg_pairs_dict = defaultdict(dict), defaultdict(dict)
-        local_mapping_dict = self._get_local_mapping_dict()
+        # local_mapping_dict = self._get_local_mapping_dict()
         for bkafi_dim in self.nn_dict.keys():
             for list_ind, cand_pairs_per_item in enumerate(cand_pairs_per_item_list):
                 if list_ind == 0:
@@ -154,12 +154,17 @@ class Blocker:
                     pos_pairs_dict[bkafi_dim][cand_pairs_per_item] = pos_pairs_dict[bkafi_dim][previous_val].copy()
                     neg_pairs_dict[bkafi_dim][cand_pairs_per_item] = neg_pairs_dict[bkafi_dim][previous_val].copy()
                 for cand_ind, nn_inds in self.nn_dict[bkafi_dim].items():
-                    start_ind = self._get_start_ind4nn(nn_inds, cand_ind)
-                    for nn_ind in nn_inds[start_ind:start_ind + cand_pairs_per_item]:
-                        if local_mapping_dict['cands'][cand_ind] == local_mapping_dict['index'][nn_ind]:
+                    start_ind = self.cand_pairs_per_item_list[list_ind - 1] if list_ind > 0 else 0
+                    cand_ind = str(cand_ind)
+                    for nn_ind in nn_inds[start_ind:cand_pairs_per_item]:
+                        if cand_ind == nn_ind:
                             pos_pairs_dict[bkafi_dim][cand_pairs_per_item].append((cand_ind, nn_ind))
                         else:
                             neg_pairs_dict[bkafi_dim][cand_pairs_per_item].append((cand_ind, nn_ind))
+                        # if local_mapping_dict['cands'][cand_ind] == local_mapping_dict['index'][nn_ind]:
+                        #     pos_pairs_dict[bkafi_dim][cand_pairs_per_item].append((cand_ind, nn_ind))
+                        # else:
+                        #     neg_pairs_dict[bkafi_dim][cand_pairs_per_item].append((cand_ind, nn_ind))
         return pos_pairs_dict, neg_pairs_dict
 
     def _get_local_mapping_dict(self):
