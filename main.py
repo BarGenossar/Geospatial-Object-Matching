@@ -15,7 +15,6 @@ if __name__ == "__main__":
     parser.add_argument('--blocking_method', type=str, default=config.Blocking.blocking_method)
     parser.add_argument('--seed_num', type=int, default=config.Constants.seeds_num)
     args = parser.parse_args()
-
     logger = define_logger()
     print_config(logger)
     result_dict = {}

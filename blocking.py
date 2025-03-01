@@ -26,7 +26,7 @@ class Blocker:
         self.cands_mapping = {ind: orig_ind for ind, orig_ind in enumerate(self.object_dict['cands'].keys())}
         self.index_mapping = {ind: orig_ind for ind, orig_ind in enumerate(self.object_dict['index'].keys())}
         self.blocking_method_dict = self._get_blocking_method_dict()
-        self.nn_dict, self.dist_dict = self._run_blocking()
+        self.nn_dict, self.dist_dict, self.blocking_execution_time = self._run_blocking()
         self.pos_pairs_dict, self.neg_pairs_dict = self._get_candidate_pairs()
 
     def _get_centroids(self):
@@ -42,19 +42,19 @@ class Blocker:
         return {ind: orig_ind for ind, orig_ind in enumerate(sorted(centroids))}
 
     def _get_blocking_method_dict(self):
-        blocking_method_dict = {'exhaustive': self._run_exhaustive,
-                                'lsh': self._run_lsh,
-                                'kdtree': self._run_kdtree,
-                                'bkafi': self._run_bkafi,
+        blocking_method_dict = {'bkafi': self._run_bkafi,
                                 'bkafi_without_SDR': self._run_bkafi,
-                                'ViT-B/32': self._run_vit,
-                                'ViT-L/14': self._run_vit
+                                'ViT-B_32': self._run_vit,
+                                'ViT-L_14': self._run_vit
+                                # 'exhaustive': self._run_exhaustive,
+                                # 'lsh': self._run_lsh,
+                                # 'kdtree': self._run_kdtree,
                                 }
         return blocking_method_dict
 
     def _run_blocking(self):
-        nn_dict, dists_dict = self.blocking_method_dict[self.blocking_method]()
-        return nn_dict, dists_dict
+        nn_dict, dists_dict, blocking_execution_time = self.blocking_method_dict[self.blocking_method]()
+        return nn_dict, dists_dict, blocking_execution_time
 
     def _run_exhaustive(self):
         nn_dict, dists_dict = {}, {}
@@ -96,12 +96,14 @@ class Blocker:
             return self._run_bkafi_train()
         nn_dict, dists_dict = {}, {}
         model_name = config.Models.blocking_model
+        start_time = time()
         for bkafi_dim in self.bkafi_dim_list:
             target_blocking_features = {feature: self.property_ratios[feature.split('_ratio')[0]]
                                         for feature, _ in self.feature_importance_scores[model_name][:bkafi_dim]}
             bkafi_dict = self._get_bkafi_dict(target_blocking_features)
             nn_dict[bkafi_dim], dists_dict[bkafi_dim] = self._run_kdtree(bkafi_dict)
-        return nn_dict, dists_dict
+        end_time = time()
+        return nn_dict, dists_dict, round(end_time - start_time, 3)
 
     def _run_bkafi_train(self):
         nn_dict, dists_dict = {}, {}
@@ -111,7 +113,7 @@ class Blocker:
                                     for feature, _ in self.feature_importance_scores[model_name][:bkafi_dim]}
         bkafi_dict = self._get_bkafi_dict(target_blocking_features)
         nn_dict[bkafi_dim], dists_dict[bkafi_dim] = self._run_kdtree(bkafi_dict)
-        return nn_dict, dists_dict
+        return nn_dict, dists_dict, None
 
     def _get_bkafi_dict(self, target_blocking_features):
         bkafi_dict = defaultdict(dict)
@@ -143,12 +145,14 @@ class Blocker:
         index = faiss.IndexFlatIP(dim)
         index.add(faiss_embds_dict['index'])
         nn_dict, dists_dict = {}, {}
+        start_time = time()
         for i, cand_query in enumerate(faiss_embds_dict['cands']):
             query = cand_query.reshape(1, -1)
             dists, neighbors = index.search(query, self.nn_param)
             nn_dict[mapping_dict['cands'][i]] = [mapping_dict['index'][ind] for ind in neighbors[0]]
             dists_dict[mapping_dict['cands'][i]] = [dist for dist in dists[0]]
-        return nn_dict, dists_dict
+        end_time = time()
+        return nn_dict, dists_dict, round(end_time - start_time, 3)
 
 
     @staticmethod

@@ -253,7 +253,9 @@ class PipelineManager:
                           self.blocking_method, 'test')
         self.logger.info(f"The blocking process ended successfully")
         self.test_pos_pairs_dict, self.test_neg_pairs_dict = blocker.pos_pairs_dict, blocker.neg_pairs_dict
-        save_blocking_output(self.test_pos_pairs_dict, self.test_neg_pairs_dict, self.seed, self.logger, 'test')
+        self.blocking_execution_time = blocker.blocking_execution_time
+        save_blocking_output(self.test_pos_pairs_dict, self.test_neg_pairs_dict, self.seed, self.logger,
+                             'test', self.blocking_execution_time)
         if self.evaluation_mode == 'blocking' or self.evaluation_mode == 'end2end':
             self.blocking_result_dict = self._evaluate_blocking()
         return
@@ -262,19 +264,42 @@ class PipelineManager:
         index_ids = set(self.test_object_dict['index'].keys())
         cand_ids = set(self.test_object_dict['cands'].keys())
         max_intersection = index_ids.intersection(cand_ids)
+        if 'bkafi' in self.blocking_method:
+            blocking_res_dict = self._evaluate_bkafi_blocking(max_intersection)
+        else:
+            blocking_res_dict = self._evaluate_not_bkafi_blocking(max_intersection)
+        save_blocking_evaluation(blocking_res_dict, self.seed, self.logger)
+        return blocking_res_dict
+
+    def _evaluate_bkafi_blocking(self, max_intersection):
         blocking_res_dict = defaultdict(dict)
         for bkafi_dim in self.test_pos_pairs_dict.keys():
             for cand_pairs_per_item in self.test_pos_pairs_dict[bkafi_dim].keys():
                 pos_pairs = set(self.test_pos_pairs_dict[bkafi_dim][cand_pairs_per_item])
-                neg_pairs = set(self.test_neg_pairs_dict[bkafi_dim][cand_pairs_per_item])
                 blocking_recall = round(len(pos_pairs) / len(max_intersection), 3)
-                total_pairs = len(pos_pairs) + len(neg_pairs)
-                blocking_res_dict[bkafi_dim][cand_pairs_per_item] = {'blocking_recall': blocking_recall}
-                self.logger.info(f"Blocking recall for bkafi_dim {bkafi_dim} and cand_pairs_per_item "
+                blocking_res_dict[bkafi_dim][cand_pairs_per_item] = {'blocking_recall': blocking_recall,
+                                                                     'blocking_execution_time':
+                                                                         self.blocking_execution_time}
+                self.logger.info(f"Blocking recall for {self.blocking_method}_dim {bkafi_dim} and cand_pairs_per_item "
                                  f"{cand_pairs_per_item}: {blocking_recall}")
                 self.logger.info(3*'- - - - - - - - - - - - -')
-        save_blocking_evaluation(blocking_res_dict, self.seed, self.logger)
         return blocking_res_dict
+
+    def _evaluate_not_bkafi_blocking(self, max_intersection):
+        blocking_res_dict = defaultdict(dict)
+        for cand_pairs_per_item in self.test_pos_pairs_dict.keys():
+            pos_pairs = set(self.test_pos_pairs_dict[cand_pairs_per_item])
+            blocking_recall = round(len(pos_pairs) / len(max_intersection), 3)
+            blocking_res_dict[cand_pairs_per_item] = {'blocking_recall': blocking_recall,
+                                                      'blocking_execution_time': self.blocking_execution_time}
+            self.logger.info(f"Blocking recall for {self.blocking_method}, cand_pairs_per_item "
+                             f"{cand_pairs_per_item}: {blocking_recall}")
+            self.logger.info(3*'--------------------------')
+        return blocking_res_dict
+
+
+
+
 
     # def _split_indices(self, label):
     #     test_size = config.Constants.test_ratio

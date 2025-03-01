@@ -33,10 +33,14 @@ def initialize_embedding_dict(cands_figs_path, index_figs_path, vit_model_name):
     for file_type, figs_path in zip(['cands', 'index'], [cands_figs_path, index_figs_path]):
         embeddings_path = os.path.join(figs_path, f'embeddings_{vit_model_name}.joblib')
         if os.path.exists(embeddings_path):
+            print(f"Loading embeddings for {file_type} images")
             embeddings_dict[file_type] = joblib.load(embeddings_path)
+            print(embeddings_dict[file_type].keys())
         else:
+            print(f"Initializing embeddings for {file_type} images. There is no embeddings file in {embeddings_path}")
             embeddings_dict[file_type] = {}
     return embeddings_dict
+
 
 def get_clip_embedding(model, preprocess, image_path):
     image = preprocess(Image.open(image_path)).unsqueeze(0).to(device)
@@ -46,16 +50,20 @@ def get_clip_embedding(model, preprocess, image_path):
 
 
 def get_embedding_dict(embeddings_dict, object_dict, vit_model_name, cands_figs_path, index_figs_path):
-    model, preprocess = clip.load(vit_model_name, device=device)
+    model, preprocess = clip.load(vit_model_name.replace('_', '/'), device=device)
     for file_type, figs_path in zip(['cands', 'index'], [cands_figs_path, index_figs_path]):
         images_to_embed = [obj_ind for obj_ind in object_dict[file_type].keys()
                            if obj_ind not in embeddings_dict[file_type].keys()]
+        print(f"The number of objects in embeddings_dict: {len(embeddings_dict[file_type])}")
+        print(f"The number of objects in object_dict: {len(object_dict[file_type])}")
+        print(f"The number of objects in both: {len(set(embeddings_dict[file_type].keys()).intersection(set(object_dict[file_type].keys())))}")
         print(f"Generating embeddings for {len(images_to_embed)} {file_type} images")
         for obj_ind in tqdm.tqdm(images_to_embed):
             fig_path = os.path.join(figs_path, f'{obj_ind}.png')
             embeddings_dict[file_type][obj_ind] = get_clip_embedding(model, preprocess, fig_path)
-        joblib.dump(embeddings_dict, os.path.join(figs_path, f'embeddings_{vit_model_name}.joblib'))
-        print(f"Saved embeddings {file_type} images")
+        joblib.dump(embeddings_dict[file_type], os.path.join(figs_path, f'embeddings_{vit_model_name}.joblib'))
+        print(f"The number of objects in embeddings_dict: {len(embeddings_dict[file_type])}")
+        print(f"Saved embeddings {file_type} images in {os.path.join(figs_path, f'embeddings_{vit_model_name}.joblib')}")
     return embeddings_dict
 
 
@@ -251,8 +259,8 @@ def load_dataset_dict(logger, seed):
         return None
 
 
-def save_blocking_output(pos_pairs, neg_pairs, seed, logger, train_or_test):
-    blocking_dict = {'pos_pairs': pos_pairs, 'neg_pairs': neg_pairs}
+def save_blocking_output(pos_pairs, neg_pairs, seed, logger, train_or_test, blocking_execution_time=None):
+    blocking_dict = {'pos_pairs': pos_pairs, 'neg_pairs': neg_pairs, blocking_execution_time: blocking_execution_time}
     file_name = get_file_name()
     blocking_results_path = config.FilePaths.results_path
     if not os.path.exists(blocking_results_path):
