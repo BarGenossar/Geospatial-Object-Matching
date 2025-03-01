@@ -186,8 +186,8 @@ class PipelineManager:
                         continue
         intersection_keys = set(object_dict['cands'].keys()).intersection(set(object_dict['index'].keys()))
         object_dict['cands'] = {obj_key: object_dict['cands'][obj_key] for obj_key in intersection_keys}
-        object_dict['index'] = {obj_key: object_dict['index'][obj_key] for obj_key in intersection_keys}
-        # print the len of the objects
+        #object_dict['index'] = {obj_key: object_dict['index'][obj_key] for obj_key in intersection_keys}
+        print(f"Number of overlapping objects: {len(intersection_keys)}")
         print(f"Number of cands: {len(object_dict['cands'])}")
         print(f"Number of index: {len(object_dict['index'])}")
         for objects_type in objects_path_dict.keys():
@@ -227,7 +227,7 @@ class PipelineManager:
         self.logger.info(f"Running blocking for training phase")
         dummy_feature_importance_scores = self._get_dummy_feature_importance_scores()
         dummy_property_ratios = self._get_dummy_property_ratios()
-        blocker = Blocker(self.train_object_dict, self.train_property_dict, dummy_feature_importance_scores,
+        blocker = Blocker(self.dataset_name, self.train_object_dict, self.train_property_dict, dummy_feature_importance_scores,
                           dummy_property_ratios, 'bkafi', 'train')
         self.logger.info(f"The blocking process for the training phase ended successfully")
         self.train_pos_pairs_dict, self.train_neg_pairs_dict = blocker.pos_pairs_dict, blocker.neg_pairs_dict
@@ -248,13 +248,14 @@ class PipelineManager:
     def _run_blocker(self):
         blocking_method = config.Blocking.blocking_method
         self.logger.info(f"Running blocking method {blocking_method}")
-        blocker = Blocker(self.test_object_dict, self.test_property_dict, self.train_feature_importance_scores,
-                          self.train_property_ratios, self.blocking_method, 'test')
+        blocker = Blocker(self.dataset_name, self.test_object_dict, self.test_property_dict,
+                          self.train_feature_importance_scores, self.train_property_ratios,
+                          self.blocking_method, 'test')
         self.logger.info(f"The blocking process ended successfully")
         self.test_pos_pairs_dict, self.test_neg_pairs_dict = blocker.pos_pairs_dict, blocker.neg_pairs_dict
         save_blocking_output(self.test_pos_pairs_dict, self.test_neg_pairs_dict, self.seed, self.logger, 'test')
-        if self.evaluation_mode == 'blocking':
-            self.result_dict = self._evaluate_blocking()
+        if self.evaluation_mode == 'blocking' or self.evaluation_mode == 'end2end':
+            self.blocking_result_dict = self._evaluate_blocking()
         return
 
     def _evaluate_blocking(self):
@@ -268,8 +269,7 @@ class PipelineManager:
                 neg_pairs = set(self.test_neg_pairs_dict[bkafi_dim][cand_pairs_per_item])
                 blocking_recall = round(len(pos_pairs) / len(max_intersection), 3)
                 total_pairs = len(pos_pairs) + len(neg_pairs)
-                blocking_res_dict[bkafi_dim][cand_pairs_per_item] = {'blocking_recall': blocking_recall,
-                                                                     'k': cand_pairs_per_item}
+                blocking_res_dict[bkafi_dim][cand_pairs_per_item] = {'blocking_recall': blocking_recall}
                 self.logger.info(f"Blocking recall for bkafi_dim {bkafi_dim} and cand_pairs_per_item "
                                  f"{cand_pairs_per_item}: {blocking_recall}")
                 self.logger.info(3*'- - - - - - - - - - - - -')
@@ -454,10 +454,10 @@ class PipelineManager:
 
     def _get_result_dict(self):
         if self.evaluation_mode == 'blocking':
-            return self.result_dict
+            return {'blocking': self.blocking_result_dict}
         elif self.evaluation_mode == 'matching':
-            return self.flexible_classifier_obj.result_dict
+            return {'matching': self.flexible_classifier_obj.result_dict}
         elif self.evaluation_mode == 'end2end':
-            return {'blocking': self.result_dict, 'matching': self.flexible_classifier_obj.result_dict}
+            return {'blocking': self.blocking_result_dict, 'matching': self.flexible_classifier_obj.result_dict}
         else:
             raise ValueError(f"Evaluation mode {self.evaluation_mode} is not supported")

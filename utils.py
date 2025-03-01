@@ -8,7 +8,14 @@ from pyproj import Proj, transform
 from collections import defaultdict
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import tqdm
+import clip
+from PIL import Image
+import torch
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def read_object_path_dict(dataset_config):
     return {'cands': dataset_config['cands_path'], 'index': dataset_config['index_path']}
@@ -19,6 +26,133 @@ def close_polygon(vertices):
     if vertices[0] != vertices[-1]:
         vertices.append(vertices[0])
     return vertices
+
+
+def initialize_embedding_dict(cands_figs_path, index_figs_path, vit_model_name):
+    embeddings_dict = {}
+    for file_type, figs_path in zip(['cands', 'index'], [cands_figs_path, index_figs_path]):
+        embeddings_path = os.path.join(figs_path, f'embeddings_{vit_model_name}.joblib')
+        if os.path.exists(embeddings_path):
+            embeddings_dict[file_type] = joblib.load(embeddings_path)
+        else:
+            embeddings_dict[file_type] = {}
+    return embeddings_dict
+
+def get_clip_embedding(model, preprocess, image_path):
+    image = preprocess(Image.open(image_path)).unsqueeze(0).to(device)
+    with torch.no_grad():
+        embedding = model.encode_image(image).float()
+    return embedding.cpu().numpy()
+
+
+def get_embedding_dict(embeddings_dict, object_dict, vit_model_name, cands_figs_path, index_figs_path):
+    model, preprocess = clip.load(vit_model_name, device=device)
+    for file_type, figs_path in zip(['cands', 'index'], [cands_figs_path, index_figs_path]):
+        images_to_embed = [obj_ind for obj_ind in object_dict[file_type].keys()
+                           if obj_ind not in embeddings_dict[file_type].keys()]
+        print(f"Generating embeddings for {len(images_to_embed)} {file_type} images")
+        for obj_ind in tqdm.tqdm(images_to_embed):
+            fig_path = os.path.join(figs_path, f'{obj_ind}.png')
+            embeddings_dict[file_type][obj_ind] = get_clip_embedding(model, preprocess, fig_path)
+        joblib.dump(embeddings_dict, os.path.join(figs_path, f'embeddings_{vit_model_name}.joblib'))
+        print(f"Saved embeddings {file_type} images")
+    return embeddings_dict
+
+
+def generate_png_figs_wrapper(object_dict, existing_images_dict, index_figs_path, cands_figs_path):
+    new_generated_objects = {'cands': [], 'index': []}
+    for file_type, figs_path in zip(['cands', 'index'], [cands_figs_path, index_figs_path]):
+        for obj_ind, obj_data in tqdm.tqdm(object_dict[file_type].items()):
+            if obj_ind in existing_images_dict[file_type]:
+                continue
+            generate_png_fig(obj_ind, obj_data['polygon_mesh'], figs_path)
+            new_generated_objects[file_type].append(obj_ind)
+        print(f"Generated {len(new_generated_objects[file_type])} {file_type} images")
+    return new_generated_objects
+
+
+def generate_figs_dir(dataset_name):
+    dataset_config = json.load(open('dataset_configs.json'))[dataset_name]
+    index_path = ''.join((dataset_config['index_path'], 'png_figs'))
+    cands_path = ''.join((dataset_config['cands_path'], 'png_figs'))
+    if not os.path.exists(index_path):
+        os.makedirs(index_path)
+    if not os.path.exists(cands_path):
+        os.makedirs(cands_path)
+    return index_path, cands_path
+
+
+def get_existing_images_dict(index_path, cands_path):
+    existing_images_dict = {}
+    for file_type, dir_path in zip(['index', 'cands'], [index_path, cands_path]):
+        existing_images_dict[file_type] = {f.split('.')[0] for f in os.listdir(dir_path) if f.endswith('.png')}
+    return existing_images_dict
+
+
+def get_embeddings_wrapper(dataset_name, object_dict, vit_model_name):
+    index_figs_path, cands_figs_path = generate_figs_dir(dataset_name)
+    existing_images_dict = get_existing_images_dict(index_figs_path, cands_figs_path)
+    generate_png_figs_wrapper(object_dict, existing_images_dict, index_figs_path, cands_figs_path)
+    embeddings_dict = initialize_embedding_dict(cands_figs_path, index_figs_path, vit_model_name)
+    embeddings_dict = get_embedding_dict(embeddings_dict, object_dict, vit_model_name,
+                                         cands_figs_path, index_figs_path)
+    embeddings_dict = {file_type: {obj_ind: embeddings_dict[file_type][obj_ind]
+                                   for obj_ind in object_dict[file_type].keys()}
+                       for file_type in ['cands', 'index']}
+    return embeddings_dict
+
+
+def get_faiss_embeddings(embeddings_dict):
+    mapping_dict = {'cands': {}, 'index': {}}
+    faiss_embds = {}
+    for file_type in ['cands', 'index']:
+        embds = []
+        for list_ind, obj_ind in enumerate(embeddings_dict[file_type].keys()):
+            embds.append(embeddings_dict[file_type][obj_ind])
+            mapping_dict[file_type][list_ind] = obj_ind
+        embds = np.array(embds, dtype=np.float32)
+        faiss_embds[file_type] = np.squeeze(embds, axis=1)
+    return faiss_embds, mapping_dict
+
+
+def find_min_coord(dim, polygon_mesh):
+    return min([vertex[dim] for surface in polygon_mesh for vertex in surface])
+
+
+def find_max_coord(dim, polygon_mesh):
+    return max([vertex[dim] for surface in polygon_mesh for vertex in surface])
+
+
+def generate_png_fig(obj_id, polygon_mesh, save_dir, margin=3):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    for surface in polygon_mesh:
+        poly = Poly3DCollection([surface], alpha=0.5, edgecolor='k')
+        ax.add_collection3d(poly)
+
+    x_min = find_min_coord(0, polygon_mesh) - margin
+    y_min = find_min_coord(1, polygon_mesh) - margin
+    z_min = find_min_coord(2, polygon_mesh) - margin
+    x_max = find_max_coord(0, polygon_mesh) + margin
+    y_max = find_max_coord(1, polygon_mesh) + margin
+    z_max = find_max_coord(2, polygon_mesh) + margin
+
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    ax.set_zlim(z_min, z_max)
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+    ax.set_zlabel('')
+    ax.grid(False)  # Disable grid
+    ax.set_axis_off()  # Remove the background planes
+    ax.set_rasterized(True)
+    plt.savefig(os.path.join(save_dir, f'{obj_id}.png'), format='png', bbox_inches='tight',
+                pad_inches=0, transparent=True)
+    plt.close(fig)
 
 
 def read_roads_from_json(roads_path):
@@ -235,57 +369,58 @@ def get_feature_name_list(operator):
         raise ValueError(f"Operator {operator} is not supported")
 
 
-def generate_final_result_csv(result_dict, evaluation_mode, blocking_method):
+def generate_final_result_csv(results_dict, evaluation_mode, blocking_method):
     file_name = get_file_name()
     results_path = config.FilePaths.results_path
     if not os.path.exists(results_path[:-1]):
         os.makedirs(results_path[:-1])
     # file_path = f"{results_path}FinalResults_{file_name}_{evaluation_mode}.csv"
     final_res_dict = defaultdict(dict)
-    print(result_dict)
     if evaluation_mode == 'matching':
-        generate_final_results_matching(result_dict, final_res_dict, results_path, file_name)
+        generate_final_results_matching(results_dict, results_path, file_name)
     elif evaluation_mode == 'blocking':
-        generate_final_results_blocking(result_dict, final_res_dict, results_path, file_name, blocking_method)
+        generate_final_results_blocking(results_dict, results_path, file_name, blocking_method)
     elif evaluation_mode == 'end2end':
-        generate_final_results_matching(result_dict, final_res_dict, results_path, file_name)
-        generate_final_results_blocking(result_dict, final_res_dict, results_path, file_name, blocking_method)
+        generate_final_results_matching(results_dict, results_path, file_name)
+        generate_final_results_blocking(results_dict, results_path, file_name, blocking_method)
     else:
         raise ValueError(f"Evaluation mode {evaluation_mode} is not supported")
     return
 
 
-def generate_final_results_matching(result_dict, final_res_dict, results_path, file_name):
+def generate_final_results_matching(results_dict, results_path, file_name):
+    final_res_dict = defaultdict(dict)
     file_path = f"{results_path}FinalResults_{file_name}_matching.csv"
-    for model_name, model_dict in result_dict[1]['matching'].items():
+    for model_name, model_dict in results_dict[1]['matching'].items():
+        final_res_dict[model_name] = {}
         for metric in model_dict.keys():
-            final_res_dict[model_name] = {}
             metric_res_list = []
-            for seed in result_dict.keys():
-                metric_res_list.append(result_dict[seed]['matching'][model_name][metric])
+            for seed in results_dict.keys():
+                metric_res_list.append(results_dict[seed]['matching'][model_name][metric])
             final_res_dict[model_name][metric] = round(np.mean(metric_res_list), 3)
     df = pd.DataFrame.from_dict(final_res_dict, orient='index')
     df.to_csv(file_path)
     return
 
 
-def generate_final_results_blocking(result_dict, final_res_dict, results_path, file_name, blocking_method):
+def generate_final_results_blocking(results_dict, results_path, file_name, blocking_method):
+    final_res_dict = defaultdict(dict)
     file_path = f"{results_path}FinalResults_{file_name}_blocking.csv"
     if "bkafi" in blocking_method:
-        for bkafi_dim in config.Blocking.bkafi_dim_list:
-            for metric in result_dict[1]['blocking'][bkafi_dim].keys():
-                final_res_dict[f'{bkafi_dim}'] = {}
-                metric_res_list = []
-                for seed in result_dict.keys():
-                    metric_res_list.append(result_dict[seed]['blocking'][bkafi_dim][metric])
-                final_res_dict[f'{bkafi_dim}'][metric] = round(np.mean(metric_res_list), 3)
+        for bkafi_dim, bkafi_dict in results_dict[1]['blocking'].items():
+            for cand_pairs_per_item, cand_dict in bkafi_dict.items():
+                for metric, metric_val in cand_dict.items():
+                    metric_res_list = []
+                    for seed in results_dict.keys():
+                        metric_res_list.append(results_dict[seed]['blocking'][bkafi_dim][cand_pairs_per_item][metric])
+                    final_res_dict[f'{bkafi_dim}_{cand_pairs_per_item}'][metric] = round(np.mean(metric_res_list), 3)
     else:
-        for cand_pairs_per_item in config.Blocking.cand_pairs_per_item_list:
-            for metric in result_dict[1][cand_pairs_per_item].keys():
+        for cand_pairs_per_item in results_dict[1]['blocking'].keys():
+            for metric in results_dict[1]['blocking'][cand_pairs_per_item].keys():
                 metric_res_list = []
-                for seed in result_dict.keys():
-                    metric_res_list.append(result_dict[seed]['blocking'][cand_pairs_per_item][metric])
-                final_res_dict[f'{cand_pairs_per_item}'][metric] = round(np.mean(metric_res_list), 3)
+                for seed in results_dict.keys():
+                    metric_res_list.append(results_dict[seed]['blocking'][cand_pairs_per_item][metric])
+                final_res_dict[cand_pairs_per_item][metric] = round(np.mean(metric_res_list), 3)
     df = pd.DataFrame.from_dict(final_res_dict, orient='index')
     df.to_csv(file_path)
     return

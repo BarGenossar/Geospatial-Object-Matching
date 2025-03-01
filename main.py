@@ -18,13 +18,13 @@ if __name__ == "__main__":
 
     logger = define_logger()
     print_config(logger)
-    final_result_dict = {}
+    result_dict = {}
     for seed in range(1, args.seed_num+1):
         logger.info(f"Seed: {seed}")
         logger.info(3*'--------------------------')
         pipeline_manager_obj = PipelineManager(seed, logger, args)
-        final_result_dict[seed] = pipeline_manager_obj.result_dict
-    generate_final_result_csv(final_result_dict, args.evaluation_mode, logger)
+        result_dict[seed] = pipeline_manager_obj.result_dict
+    generate_final_result_csv(result_dict, args.evaluation_mode, args.blocking_method)
     logger.info("Done!")
 
 

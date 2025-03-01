@@ -5,11 +5,13 @@ import numpy as np
 from collections import defaultdict
 from time import time
 from scipy.spatial import KDTree
+import tqdm
 
 
 class Blocker:
-    def __init__(self, object_dict, property_dict, feature_importance_scores, property_ratios,
+    def __init__(self, dataset_name, object_dict, property_dict, feature_importance_scores, property_ratios,
                  blocking_method, train_or_test):
+        self.dataset_name = dataset_name
         self.blocking_method = blocking_method
         self.nn_param = config.Blocking.nn_param
         self.cand_pairs_per_item_list = config.Blocking.cand_pairs_per_item_list
@@ -31,7 +33,7 @@ class Blocker:
         centroids_dict = defaultdict(dict)
         for objects_type in ['cands', 'index']:
             centroids_dict[objects_type] = {obj_ind: obj_data['centroid'] for obj_ind, obj_data in
-                                           self.object_dict[objects_type].items()}
+                                            self.object_dict[objects_type].items()}
             centroids_dict[objects_type] = dict(sorted(centroids_dict[objects_type].items()))
         return centroids_dict
 
@@ -43,13 +45,16 @@ class Blocker:
         blocking_method_dict = {'exhaustive': self._run_exhaustive,
                                 'lsh': self._run_lsh,
                                 'kdtree': self._run_kdtree,
-                                'bkafi': self._run_bkafi}
+                                'bkafi': self._run_bkafi,
+                                'bkafi_without_SDR': self._run_bkafi,
+                                'ViT-B/32': self._run_vit,
+                                'ViT-L/14': self._run_vit
+                                }
         return blocking_method_dict
 
     def _run_blocking(self):
         nn_dict, dists_dict = self.blocking_method_dict[self.blocking_method]()
         return nn_dict, dists_dict
-
 
     def _run_exhaustive(self):
         nn_dict, dists_dict = {}, {}
@@ -120,13 +125,31 @@ class Blocker:
                 bkafi_dict[obj_type][obj_ind] = np.array(bkafi_dict[obj_type][obj_ind])
         return bkafi_dict
 
-    @staticmethod
-    def _get_bkafi_factor_dict(target_blocking_features):
+    def _get_bkafi_factor_dict(self, target_blocking_features):
         factor_dict = defaultdict(dict)
-        factor_dict['cands'] = {feature: target_blocking_features[feature]['mean']
-                                for feature in target_blocking_features}
+        if self.blocking_method == 'bkafi_without_SDR':
+            factor_dict['cands'] = {feature: 1.0 for feature in target_blocking_features}
+        else:
+            factor_dict['cands'] = {feature: target_blocking_features[feature]['mean']
+                                    for feature in target_blocking_features}
         factor_dict['index'] = {feature: 1.0 for feature in target_blocking_features}
         return factor_dict
+
+    def _run_vit(self):
+        vit_model_name = self.blocking_method
+        embeddings_dict = get_embeddings_wrapper(self.dataset_name, self.object_dict, vit_model_name)
+        faiss_embds_dict, mapping_dict = get_faiss_embeddings(embeddings_dict)
+        dim = faiss_embds_dict['index'].shape[1]
+        index = faiss.IndexFlatIP(dim)
+        index.add(faiss_embds_dict['index'])
+        nn_dict, dists_dict = {}, {}
+        for i, cand_query in enumerate(faiss_embds_dict['cands']):
+            query = cand_query.reshape(1, -1)
+            dists, neighbors = index.search(query, self.nn_param)
+            nn_dict[mapping_dict['cands'][i]] = [mapping_dict['index'][ind] for ind in neighbors[0]]
+            dists_dict[mapping_dict['cands'][i]] = [dist for dist in dists[0]]
+        return nn_dict, dists_dict
+
 
     @staticmethod
     def _get_start_ind4nn(nn_inds, cand_ind):
@@ -144,6 +167,13 @@ class Blocker:
             cand_pairs_per_item_list = self.cand_pairs_per_item_list
         pos_pairs_dict, neg_pairs_dict = defaultdict(dict), defaultdict(dict)
         # local_mapping_dict = self._get_local_mapping_dict()
+        if 'bkafi' in self.blocking_method:
+            return self._get_candidate_pairs_bkafi(cand_pairs_per_item_list)
+        else:
+            return self._get_candidate_pairs_not_bkafi(cand_pairs_per_item_list)
+
+    def _get_candidate_pairs_bkafi(self, cand_pairs_per_item_list):
+        pos_pairs_dict, neg_pairs_dict = defaultdict(dict), defaultdict(dict)
         for bkafi_dim in self.nn_dict.keys():
             for list_ind, cand_pairs_per_item in enumerate(cand_pairs_per_item_list):
                 if list_ind == 0:
@@ -161,10 +191,26 @@ class Blocker:
                             pos_pairs_dict[bkafi_dim][cand_pairs_per_item].append((cand_ind, nn_ind))
                         else:
                             neg_pairs_dict[bkafi_dim][cand_pairs_per_item].append((cand_ind, nn_ind))
-                        # if local_mapping_dict['cands'][cand_ind] == local_mapping_dict['index'][nn_ind]:
-                        #     pos_pairs_dict[bkafi_dim][cand_pairs_per_item].append((cand_ind, nn_ind))
-                        # else:
-                        #     neg_pairs_dict[bkafi_dim][cand_pairs_per_item].append((cand_ind, nn_ind))
+        return pos_pairs_dict, neg_pairs_dict
+
+    def _get_candidate_pairs_not_bkafi(self, cand_pairs_per_item_list):
+        pos_pairs_dict, neg_pairs_dict = dict(), dict()
+        for list_ind, cand_pairs_per_item in enumerate(cand_pairs_per_item_list):
+            if list_ind == 0:
+                pos_pairs_dict[cand_pairs_per_item] = []
+                neg_pairs_dict[cand_pairs_per_item] = []
+            else:
+                previous_val = self.cand_pairs_per_item_list[list_ind - 1]
+                pos_pairs_dict[cand_pairs_per_item] = pos_pairs_dict[previous_val].copy()
+                neg_pairs_dict[cand_pairs_per_item] = neg_pairs_dict[previous_val].copy()
+            for cand_ind, nn_inds in self.nn_dict.items():
+                start_ind = self.cand_pairs_per_item_list[list_ind - 1] if list_ind > 0 else 0
+                cand_ind = str(cand_ind)
+                for nn_ind in nn_inds[start_ind:cand_pairs_per_item]:
+                    if cand_ind == nn_ind:
+                        pos_pairs_dict[cand_pairs_per_item].append((cand_ind, nn_ind))
+                    else:
+                        neg_pairs_dict[cand_pairs_per_item].append((cand_ind, nn_ind))
         return pos_pairs_dict, neg_pairs_dict
 
     def _get_local_mapping_dict(self):
