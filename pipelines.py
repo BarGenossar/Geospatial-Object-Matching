@@ -227,8 +227,8 @@ class PipelineManager:
         self.logger.info(f"Running blocking for training phase")
         dummy_feature_importance_scores = self._get_dummy_feature_importance_scores()
         dummy_property_ratios = self._get_dummy_property_ratios()
-        blocker = Blocker(self.dataset_name, self.train_object_dict, self.train_property_dict, dummy_feature_importance_scores,
-                          dummy_property_ratios, 'bkafi', 'train')
+        blocker = Blocker(self.dataset_name, self.train_object_dict, self.train_property_dict,
+                          dummy_feature_importance_scores, dummy_property_ratios, 'bkafi', 'train')
         self.logger.info(f"The blocking process for the training phase ended successfully")
         self.train_pos_pairs_dict, self.train_neg_pairs_dict = blocker.pos_pairs_dict, blocker.neg_pairs_dict
         save_blocking_output(self.train_pos_pairs_dict, self.train_neg_pairs_dict, self.seed, self.logger, 'train')
@@ -246,7 +246,7 @@ class PipelineManager:
         return property_ratios
 
     def _run_blocker(self):
-        blocking_method = config.Blocking.blocking_method
+        blocking_method = self.blocking_method
         self.logger.info(f"Running blocking method {blocking_method}")
         blocker = Blocker(self.dataset_name, self.test_object_dict, self.test_property_dict,
                           self.train_feature_importance_scores, self.train_property_ratios,
@@ -268,7 +268,7 @@ class PipelineManager:
             blocking_res_dict = self._evaluate_bkafi_blocking(max_intersection)
         else:
             blocking_res_dict = self._evaluate_not_bkafi_blocking(max_intersection)
-        save_blocking_evaluation(blocking_res_dict, self.seed, self.logger)
+        save_blocking_evaluation(blocking_res_dict, self.seed, self.logger, self.blocking_method)
         return blocking_res_dict
 
     def _evaluate_bkafi_blocking(self, max_intersection):
