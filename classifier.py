@@ -15,19 +15,23 @@ from sklearn.preprocessing import LabelEncoder
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
-from utils import get_feature_name_list, get_file_name, load_property_dict
+from utils import get_feature_name_list, get_file_name
 
 
 class FlexibleClassifier:
-    def __init__(self, dataset_dict, params_dict, seed, logger, train_or_test, load_trained_models=False, cv=5):
+    def __init__(self, dataset_dict, property_dict, params_dict, seed, logger, evaluation_mode,
+                 dataset_size_version, neg_samples_num, load_trained_models=False, cv=5):
         self.dataset_dict = dataset_dict
+        self.property_dict = property_dict
         self.params_dict = params_dict
         self.seed = seed
+        self.dataset_size_version = dataset_size_version
+        self.neg_samples_num = neg_samples_num
         self.load_trained_models = load_trained_models
         self.cv = cv
         self.models_path = config.FilePaths.saved_models_path
         self.logger = logger
-        self.train_or_test = train_or_test
+        self.evaluation_mode = evaluation_mode
         self.model_dict = self._get_model_dict()
         self.file_name = get_file_name()
         self.scorer = make_scorer(f1_score, average='macro')
@@ -48,25 +52,27 @@ class FlexibleClassifier:
         return model_dict
 
     def _save_model(self, model, model_name):
-        general_file_name = f"{self.train_or_test}_{self.file_name}"
+        general_file_name = (f"{self.evaluation_mode}_{self.file_name}_{self.dataset_size_version}_"
+                             f"neg_samples_num={self.neg_samples_num}")
         if not os.path.exists(self.models_path[:-1]):
             os.makedirs(self.models_path[:-1])
         try:
             model_file_name = f'{self.models_path}{model_name}_{general_file_name}_seed{self.seed}.joblib'
             feature_name_list = self._get_final_feature_name_list()
             joblib.dump({'model': model, 'feature_name_list': feature_name_list}, model_file_name)
-            logging.info(f"Model {model_name} was saved successfully ({self.train_or_test})")
+            logging.info(f"Model {model_name} was saved successfully ({self.evaluation_mode})")
             logging.info('')
         except Exception as e:
-            logging.error(f"Error happened while saving model {model_name} ({self.train_or_test}): {e}")
+            logging.error(f"Error happened while saving model {model_name} ({self.evaluation_mode}): {e}")
 
     def _load_model(self, model_name):
-        general_file_name = f"{self.train_or_test}_{self.file_name}"
+        general_file_name = (f"{self.evaluation_mode}_{self.file_name}_{self.dataset_size_version}_"
+                             f"neg_samples_num={self.neg_samples_num}")
         try:
             model = joblib.load(f'{self.models_path}{model_name}_{general_file_name}_seed{self.seed}.joblib')
             logging.info(f"Model {model_name} was loaded successfully")
             logging.info('')
-            print(f"Model {model_name} was loaded successfully {self.train_or_test})")
+            print(f"Model {model_name} was loaded successfully {self.evaluation_mode})")
             return model['model']
         except Exception as e:
             logging.error(f"Error happened while loading model {model_name}: {e}. Starting training...")
@@ -124,12 +130,10 @@ class FlexibleClassifier:
     def _train_and_evaluate_model(self, result_dict, model_name, params):
         best_model = self._get_best_model(model_name, params)
         feature_name_list = self._get_final_feature_name_list()
-        if self.train_or_test == 'train':
-            result_dict = None
-        else:
-            x_test = self.dataset_dict['test']['X'] if self.train_or_test == 'test' else None
-            y_test_preds = best_model.predict(x_test)
-            result_dict = self._insert_results_to_dict(result_dict, model_name, y_test_preds)
+        data_type = 'train' if self.evaluation_mode == "blocking" else 'test'
+        x_test = self.dataset_dict[data_type]['X']
+        y_test_preds = best_model.predict(x_test)
+        result_dict = self._insert_results_to_dict(result_dict, model_name, y_test_preds)
         return {'model': best_model, 'feature_name_list': feature_name_list}, result_dict
 
     def _get_y_train(self, model_name):
@@ -142,8 +146,6 @@ class FlexibleClassifier:
             return y_train
 
     def _train_model(self, model_name, model, params):
-        # x_train = self.dataset_dict['train']['X'] if self.train_mode is not True else self.dataset_dict['prep']['X']
-
         if 'train' not in self.dataset_dict.keys():
             raise ValueError("You first need to run the code with "
                              "config.TrainingPhase.run_preparatory_phase = True")
@@ -157,7 +159,8 @@ class FlexibleClassifier:
 
     def _insert_results_to_dict(self, result_dict, model_name, y_test_preds, y_prediction_file=None):
         # Y_test = self.dataset_dict['test']['Y'] if not self.train_mode else self.dataset_dict['prep']['Y']
-        y_test = self.dataset_dict['test']['Y']
+        data_type = 'train' if self.evaluation_mode == "blocking" else 'test'
+        y_test = self.dataset_dict[data_type]['Y']
         result_dict[model_name]['precision'] = precision_score(y_test, y_test_preds, average='binary')
         result_dict[model_name]['recall'] = recall_score(y_test, y_test_preds, average='binary')
         result_dict[model_name]['f1'] = f1_score(y_test, y_test_preds, average='binary')
@@ -165,12 +168,11 @@ class FlexibleClassifier:
         return result_dict
 
     def _print_results(self):
-        # prep_mode_message = "" if not self.train_mode else "(prep mode)"
-        if self.train_or_test == 'train':
-            self.logger.info("Training phase has ended")
-            return
         for model_name, model_results in self.result_dict.items():
             # self.logger.info(f"Results for model {model_name}{prep_mode_message}:")
+            eval_mode_message = f" {self.evaluation_mode} mode (results over train set)" if (
+                    self.evaluation_mode == "blocking") else ""
+            self.logger.info(f"{eval_mode_message}")
             self.logger.info(f"Results for model {model_name}:")
             self.logger.info(f"Precision: {round(model_results['precision'], 3)}")
             self.logger.info(f"Recall: {round(model_results['recall'], 3)}")
@@ -217,14 +219,13 @@ class FlexibleClassifier:
         self.logger.info('')
         return
 
-    def get_property_ratios(self, train_or_test):
-        property_dict = load_property_dict(self.logger, self.seed, train_or_test)
+    def get_property_ratios(self):
         property_ratios = dict()
-        for prop, curr_prop_dict in property_dict.items():
+        for prop, curr_prop_dict in self.property_dict.items():
             ratio_hist = [curr_prop_dict['index'][ind] / curr_prop_dict['cands'][ind] for ind in
                           curr_prop_dict['index'].keys() if ind in curr_prop_dict['cands'].keys()]
             property_ratios[prop] = {'mean': round(np.mean(ratio_hist), 3),
-                                                    'std': round(np.std(ratio_hist), 3)}
+                                     'std': round(np.std(ratio_hist), 3)}
         self._save_property_ratios(property_ratios)
         return property_ratios
 

@@ -6,11 +6,12 @@ from collections import defaultdict
 from time import time
 from scipy.spatial import KDTree
 import tqdm
+from sklearn.preprocessing import RobustScaler
 
 
 class Blocker:
     def __init__(self, dataset_name, object_dict, property_dict, feature_importance_scores, property_ratios,
-                 blocking_method, train_or_test):
+                 blocking_method, sdr_factor, train_or_test):
         self.dataset_name = dataset_name
         self.blocking_method = blocking_method
         self.nn_param = config.Blocking.nn_param
@@ -21,6 +22,7 @@ class Blocker:
         self.property_dict = property_dict
         self.feature_importance_scores = feature_importance_scores
         self.property_ratios = property_ratios
+        self.sdr_factor = sdr_factor
         self.train_or_test = train_or_test
         self.centroids_dict = self._get_centroids()
         self.cands_mapping = {ind: orig_ind for ind, orig_ind in enumerate(self.object_dict['cands'].keys())}
@@ -43,10 +45,10 @@ class Blocker:
 
     def _get_blocking_method_dict(self):
         blocking_method_dict = {'bkafi': self._run_bkafi,
-                                'bkafi_without_SDR': self._run_bkafi,
                                 'ViT-B_32': self._run_vit,
-                                'ViT-L_14': self._run_vit
-                                # 'exhaustive': self._run_exhaustive,
+                                'ViT-L_14': self._run_vit,
+                                'centroid': self._run_exhaustive,
+                                'centroid_with_transform': self._run_exhaustive,
                                 # 'lsh': self._run_lsh,
                                 # 'kdtree': self._run_kdtree,
                                 }
@@ -60,13 +62,33 @@ class Blocker:
         nn_dict, dists_dict = {}, {}
         cands_centroids_np = np.array(list(self.centroids_dict['cands'].values()), dtype=np.float32)
         index_centroids_np = np.array(list(self.centroids_dict['index'].values()), dtype=np.float32)
+        if self.blocking_method == 'centroid_with_transform':
+            cands_centroids_np = self._transform_centroids(cands_centroids_np, index_centroids_np)
         index = faiss.IndexFlatL2(index_centroids_np.shape[1])
         index.add(index_centroids_np)
+        start = time()
         for i, query_centroid in enumerate(cands_centroids_np):
             dists, neighbors = index.search(np.array([query_centroid]), self.nn_param)
             nn_dict[self.cands_mapping[i]] = [self.index_mapping[ind] for ind in neighbors.flatten()]
             dists_dict[self.cands_mapping[i]] = [dist for dist in dists.flatten()]
-        return nn_dict, dists_dict
+        end = time()
+        return nn_dict, dists_dict, round(end - start, 3)
+
+    def _transform_centroids(self, cands_centroids_np, index_centroids_np):
+        index_mean = np.mean(index_centroids_np, axis=0)
+        cands_mean = np.mean(cands_centroids_np, axis=0)
+        index_centered = index_centroids_np - index_mean
+        cands_centered = cands_centroids_np - cands_mean
+        H = np.dot(index_centered, cands_centered.T)
+        U, S, Vt = np.linalg.svd(H)
+        rotation_matrix = np.dot(Vt.T, U.T)
+        if np.linalg.det(rotation_matrix) < 0:
+            Vt[-1, :] *= -1
+            rotation_matrix = np.dot(Vt.T, U.T)
+        translation_vector = cands_mean - np.dot(index_mean, rotation_matrix)
+        scaling_factor = np.linalg.norm(cands_centered) / np.linalg.norm(index_centered)
+        cands_centroids_np = scaling_factor * np.dot(index_centroids_np, rotation_matrix) + translation_vector
+        return cands_centroids_np
 
     def _run_lsh(self):
         nn_dict, dists_dict = {}, {}
@@ -81,9 +103,12 @@ class Blocker:
         return nn_dict, dists_dict
 
     def _run_kdtree(self, search_dict):
+        robust_scaler = RobustScaler()
         nn_dict, dists_dict = {}, {}
         cands_vectors_np = np.array(list(search_dict['cands'].values()), dtype=np.float32)
         index_vectors_np = np.array(list(search_dict['index'].values()), dtype=np.float32)
+        cands_vectors_np = robust_scaler.fit_transform(cands_vectors_np)
+        index_vectors_np = robust_scaler.transform(index_vectors_np)
         index = KDTree(index_vectors_np)
         dists, neighbors = index.query(cands_vectors_np, self.nn_param)
         for i, query_centroid in enumerate(cands_vectors_np):
@@ -96,14 +121,16 @@ class Blocker:
             return self._run_bkafi_train()
         nn_dict, dists_dict = {}, {}
         model_name = config.Models.blocking_model
-        start_time = time()
+        execution_time_dict = {}
         for bkafi_dim in self.bkafi_dim_list:
+            start_time = time()
             target_blocking_features = {feature: self.property_ratios[feature.split('_ratio')[0]]
                                         for feature, _ in self.feature_importance_scores[model_name][:bkafi_dim]}
             bkafi_dict = self._get_bkafi_dict(target_blocking_features)
             nn_dict[bkafi_dim], dists_dict[bkafi_dim] = self._run_kdtree(bkafi_dict)
-        end_time = time()
-        return nn_dict, dists_dict, round(end_time - start_time, 3)
+            end_time = time()
+            execution_time_dict[bkafi_dim] = round(end_time - start_time, 3)
+        return nn_dict, dists_dict, execution_time_dict
 
     def _run_bkafi_train(self):
         nn_dict, dists_dict = {}, {}
@@ -129,11 +156,11 @@ class Blocker:
 
     def _get_bkafi_factor_dict(self, target_blocking_features):
         factor_dict = defaultdict(dict)
-        if self.blocking_method == 'bkafi_without_SDR':
-            factor_dict['cands'] = {feature: 1.0 for feature in target_blocking_features}
-        else:
+        if self.sdr_factor:
             factor_dict['cands'] = {feature: target_blocking_features[feature]['mean']
                                     for feature in target_blocking_features}
+        else:
+            factor_dict['cands'] = {feature: 1.0 for feature in target_blocking_features}
         factor_dict['index'] = {feature: 1.0 for feature in target_blocking_features}
         return factor_dict
 
