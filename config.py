@@ -3,43 +3,38 @@
 class FilePaths:
     results_path = "results/"
     saved_models_path = "saved_model_files/"
+    object_dict_path = "data/object_dicts/"
     dataset_dict_path = "data/dataset_dicts/"
     property_dict_path = "data/property_dicts/"
+    dataset_partition_path = "data/dataset_partitions/"
 
 
 class Constants:
-    dataset_name = "Hague"
+    dataset_name = "Hague"  # "Hague", "delivery3", "bo_em", "gpkg"
     synthetic_folder_name = "example"  # Relevant only if dataset_name is "synthetic"
-    evaluation_mode = "end2end"  # "blocking", "matching", "end2end"
-    seeds_num = 1
+    evaluation_mode = "matching"  # "blocking", "matching"
+    dataset_size_version = 'large'  # 'small', 'medium', 'large'
+    matching_cands_generation = 'blocking-based'  # 'negative_sampling', 'blocking-based'
+    neg_samples_num = 2  # 2, 5
+    seeds_num = 3
     train_ratio = 0.6
     val_ratio = 0.2
     test_ratio = 1 - train_ratio - val_ratio
     max_ratio_val = 1000  # Avoid infinity values
-    load_object_dict = False  # Load existing object dictionary
+    load_object_dict = True  # Load existing object dictionary
     save_object_dict = True  # Save the object dictionary
     load_train_items = False  # Load existing preparatory items
     save_property_dict = True  # Save the properties dictionary
     load_property_dict = False  # Load the properties dictionary
     save_dataset_dict = True  # save the dataset dictionary
     load_dataset_dict = False  # load existing dataset dictionary
-    file_name_suffix = "280225"  # If set to None, the current exact time will be used
+    file_name_suffix = "130425"  # If set to None, the current exact time will be used
 
 
 class TrainingPhase:
     training_ratio = 0.5  # Number of positive samples
     neg_pairs_ratio = 4  # Number of negative samples per positive sample
     run_preparatory_phase = True  # If False, the preparatory phase will not be run
-
-
-class Blocking:
-    blocking_method = 'bkafi'  # 'bkafi', 'bkafi_without_SDR', 'ViT-B/32', 'ViT-L/14',
-                                # 'coordinates', 'coordinates_transformed'
-    nn_param = 52  # number of nearest neighbors to retrieve as candidates
-    cand_pairs_per_item_list = [2*i for i in range(1, 26)]  # total number of candidate pairs to retrieve for each candidate object
-    nbits = 10  # number of bits to use for LSH
-    bkafi_dim_list = [3, 5, 7, 9, 11] # Number of important features to use for blocking (for the bkafi method)
-    dist_threshold = None  # Define it as a hyperparameter or in a flexible manner
 
 
 class Features:
@@ -54,18 +49,32 @@ class Features:
                          "num_vertices"]
 
     # object_properties = ["circumference", "density", "convex_hull_area"]
-
+    normalization = 'log_transform'  # 'log_transform', None
     neighborhood = []
     roads = []
+
+
+class Blocking:
+    blocking_method = 'bkafi'  # 'bkafi', 'bkafi_without_SDR', 'ViT-B_32', 'ViT-L_14', 'centroid'
+                                # 'coordinates', 'coordinates_transformed'
+    cand_pairs_per_item_list = [i for i in range(1, 21)]  # total number of neighbors per each candidate object
+    nn_param = cand_pairs_per_item_list[-1] + 1  # number of nearest neighbors to retrieve as candidates
+    nbits = 10  # number of bits to use for LSH
+    # bkafi_dim_list = [dim for dim in range(1, len(Features.object_properties))] # Number of important features to
+    # use for blocking (for the bkafi method)
+    bkafi_dim_list = [dim for dim in range(1, len(Features.object_properties))]  # Number of important features to use
+    dist_threshold = None  # Define it as a hyperparameter or in a flexible manner
+    sdr_factor = False  # If True, the SDR factor will be used in the blocking method
+    bkafi_criterion = 'feature_importance'  # 'std', 'feature_importance'
 
 
 class Models:
     load_trained_models = False
     cv = 3
     model_to_use = 'RandomForestClassifier'  # Used only for predict.py and feature_importances.py
-    # model_list = ['RandomForestClassifier', 'SVC', 'LogisticRegression', 'AdaBoostClassifier',
-    #               'GradientBoostingClassifier', 'BaggingClassifier', 'XGBClassifier']
-    model_list = ['RandomForestClassifier', 'BaggingClassifier']
+    model_list = ['RandomForestClassifier', 'AdaBoostClassifier', 'GradientBoostingClassifier',
+                  'BaggingClassifier', 'XGBClassifier', 'MLPClassifier']
+    # model_list = ['RandomForestClassifier', 'BaggingClassifier', 'XGBClassifier']
     blocking_model = 'RandomForestClassifier'  # Used only for blocking and for advanced evaluation
     params_dict = {
                     'RandomForestClassifier': {"n_estimators": [50, 100, 200],
@@ -84,10 +93,10 @@ class Models:
                                           'C': [0.01, 0.1, 1]
                                            },
 
-                    'MLPClassifier': {'hidden_layer_sizes': [(128, 64), (128, 64, 32), (64, 32)],
+                    'MLPClassifier': {'hidden_layer_sizes': [(64, 32)],
                                       'activation': ['relu'],
                                       'solver': ['adam'],
-                                      'batch_size': [16, 32],
+                                      'batch_size': [16],
                                       'max_iter': [500],
                                       },
 
@@ -115,9 +124,6 @@ class Models:
                                       'learning_rate': [0.01, 0.01, 0.1, 0.5],
                                       'n_estimators': [50, 100, 150, 200],
                                       'gamma': [0, 0.1, 1],
-                                      # 'min_child_weight': [1, 5, 10],
-                                      # 'reg_alpha': [0, 0.1, 1],
-                                      # 'base_score': [0.5, 0.8, 1.0]
                                       }
     }
 
