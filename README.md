@@ -29,7 +29,6 @@ Experiments can be run using the provided `run_experiments.sh` script.
 
 Example:
 ```bash
-# Inside run_experiments.sh
 bash run_expriments.sh
 ```
 
