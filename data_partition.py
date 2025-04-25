@@ -8,20 +8,17 @@ from time import time
 
 
 class DataPartitionGenerator:
-    def __init__(self, seed, dataset_name, train_neg_samples_list, train_size_ratio_list,
-                 test_size_ratio_list, test_negative_samples_list, min_surfaces_num=10):
-        self.dataset_name = dataset_name
-        self.seed = seed
+    def __init__(self, args, min_surfaces_num=10):
+        self.dataset_name = args.dataset_name
         self.min_surfaces_num = min_surfaces_num
-        self.train_neg_samples_list = train_neg_samples_list
-        self.train_size_ratio_list = train_size_ratio_list
-        self.test_size_ratio_list = test_size_ratio_list
-        self.test_negative_samples_list = test_negative_samples_list
+        self.train_neg_samples_list = args.train_neg_samples_list
+        self.train_size_ratio_list = args.train_size_ratio_list
+        self.test_size_ratio_list = args.test_size_ratio_list
+        self.test_negative_samples_list = args.test_negative_samples_list
         self.cands_ids, self.index_ids = self._get_cands_and_index_ids()
         # self.create_dataset_partition_dict()
 
     def _get_cands_and_index_ids(self):
-        print(f"Creating the dataset partition dict for {self.dataset_name}, seed: {self.seed}")
         dataset_config = json.load(open('dataset_configs.json'))[self.dataset_name]
         main_object_dict = getattr(self, f'_read_objects_{self.dataset_name}')(dataset_config)
         cands_ids = set(main_object_dict['cands'].keys())
@@ -29,15 +26,16 @@ class DataPartitionGenerator:
         del main_object_dict
         return cands_ids, index_ids
 
-    def create_dataset_partition_dict(self):
+    def create_dataset_partition_dict(self, seed):
+        self.seed = seed
         cands_ids = self.cands_ids
         index_ids = self.index_ids
-        train_ids_dict = self._get_train_ids_dict(cands_ids, index_ids)
-        test_ids_dict = self._get_test_ids_dict(cands_ids, index_ids, train_ids_dict)
-        dataset_partition_dict = {'train': train_ids_dict, 'test': test_ids_dict}
+        train_negative_sampling_dict = self._get_train_negative_sampling_dict(cands_ids, index_ids)
+        test_dict = self._get_test_ids_dict(cands_ids, index_ids, train_negative_sampling_dict)
+        dataset_partition_dict = {'train': {'negative_sampling': train_negative_sampling_dict}, 'test': test_dict}
         self._save_dataset_partition_dict(dataset_partition_dict)
 
-    def _get_train_ids_dict(self, cands_ids, index_ids):
+    def _get_train_negative_sampling_dict(self, cands_ids, index_ids):
         np.random.seed(self.seed)
         train_ids_dict = {}
         intersection_set = cands_ids.intersection(index_ids)
@@ -47,7 +45,9 @@ class DataPartitionGenerator:
             train_ids_size_num = int(ratio_val * len(intersection_set))
             train_ids_for_curr_size = set(np.random.choice(list(intersection_set), train_ids_size_num, replace=False))
             for neg_samples_num in self.train_neg_samples_list:
-                train_ids_dict[train_size][neg_samples_num] = self._get_pairs_per_neg_samples(train_ids_for_curr_size, index_ids, neg_samples_num)
+                train_ids_dict[train_size][neg_samples_num] = self._get_pairs_per_neg_samples(train_ids_for_curr_size,
+                                                                                              index_ids,
+                                                                                              neg_samples_num)
         return train_ids_dict
 
     def _get_pairs_per_neg_samples(self, ids_for_curr_size, index_ids, neg_samples_num):
@@ -64,18 +64,17 @@ class DataPartitionGenerator:
     def _get_test_ids_dict(self, cands_ids, index_ids, train_ids_dict):
         test_ids_dict = {}
         intersection_set = cands_ids.intersection(index_ids)
-        test_ids_dict['matching'] = self._get_test_pairs_for_matching(cands_ids, index_ids, intersection_set, train_ids_dict)
+        test_ids_dict['matching'] = self._get_test_pairs_for_matching(cands_ids, index_ids,
+                                                                      intersection_set, train_ids_dict)
         test_ids_dict['blocking'] = self._get_test_data_for_blocking(index_ids, intersection_set, train_ids_dict)
         return test_ids_dict
 
     def _get_test_pairs_for_matching(self, cands_ids, index_ids, intersection_set, train_ids_dict):
         print("Creating test data for matching")
         test_matching_dict = {}
-        test_matching_dict['negative_sampling'] = self._get_negative_sampling_test_ids_dict(index_ids, intersection_set, train_ids_dict)
-        # try:
-        #     test_matching_dict['blocking-based'] = self._get_blocking_test_ids_dict(cands_ids, index_ids, intersection_set)
-        # except:
-        #     pass
+        test_matching_dict['negative_sampling'] = self._get_negative_sampling_test_ids_dict(index_ids,
+                                                                                            intersection_set,
+                                                                                            train_ids_dict)
         return test_matching_dict
 
     def _get_negative_sampling_test_ids_dict(self, index_ids, intersection_set, train_ids_dict):
@@ -174,7 +173,7 @@ class DataPartitionGenerator:
                 vertices = data['vertices']
                 for obj_key in data['CityObjects'].keys():
                     try:
-                        new_obj_key = standardize_obj_key(obj_key, objects_type)
+                        new_obj_key = self.standardize_obj_key(obj_key, objects_type)
                         polygon_mesh_data = self._get_polygon_mesh(data, obj_key, vertices)
                         if polygon_mesh_data is not None:
                             object_dict[objects_type][new_obj_key] = polygon_mesh_data
@@ -191,6 +190,15 @@ class DataPartitionGenerator:
             object_dict['inv_mapping_dict'][objects_type] = {obj_key: ind for ind, obj_key in
                                                              enumerate(object_dict[objects_type].keys())}
         return object_dict
+
+    @staticmethod
+    def standardize_obj_key(obj_key, object_type):
+        if object_type == 'cands':
+            return obj_key.split('bag_')[1]
+        elif object_type == 'index':
+            return obj_key.split('NL.IMBAG.Pand.')[1].split('-0')[0]
+        else:
+            raise ValueError('Invalid source')
 
     def _insert_polygon_mesh(self, object_dict, obj_type, obj_data, obj_ind=None):
         vertices = obj_data['vertices']
@@ -229,20 +237,91 @@ class DataPartitionGenerator:
         return
 
 
-if __name__ == "__main__":
-    dataset_name = "Hague"
-    seeds_num = 3
-    train_neg_samples_list = [2, 5]
-    train_size_ratio_list = {"small": 0.1, "medium": 0.4, "large": 0.6}
-    test_size_ratio_list = {"small": 0.1, "medium": 0.5, "large": 1.0}
-    test_negative_samples_list = [2, 5]
-
-    partition_dict_obj = DataPartitionGenerator(1, dataset_name, train_neg_samples_list, train_size_ratio_list,
-                                                test_size_ratio_list, test_negative_samples_list)
-    for seed in range(1, seeds_num + 1):
+def generate_partition_dicts(args):
+    partition_dict_obj = DataPartitionGenerator(args)
+    for seed in range(1, args.seeds_num + 1):
         start_time = time()
-        partition_dict_obj.create_dataset_partition_dict()
+        partition_dict_obj.create_dataset_partition_dict(seed)
         end_time = time()
         print(f"Elapsed time for seed {seed}: {end_time - start_time}")
-        print(3*'--------------------------')
+        print(3 * '--------------------------')
     print("Done!")
+
+
+def get_potnetial_neg_pairs(dataset_size_version, bkafi_dim, train_or_test, seed):
+    file_name = get_file_name()
+    file_name.replace('concatenation', 'division')
+    if train_or_test == 'train':
+        file_name = file_name.replace('Operator', 'Train_Operator')
+    blocking_results_dir = config.FilePaths.results_path + 'blocking_output/'
+    blocking_results_path = (f"{blocking_results_dir}{file_name}_"
+                             f"{dataset_size_version}_neg_samples_num2_vector_normalization_True_sdr_factor_False_"
+                             f"bkafi_criterion=feature_importance_seed={seed}.joblib")
+    print(f"\nLoading blocking results from {blocking_results_path}")
+    blocking_dict = joblib.load(blocking_results_path)
+    print(f"Loaded blocking results from {blocking_results_path}")
+    neg_pairs = blocking_dict['neg_pairs'][bkafi_dim]
+    return neg_pairs
+
+
+def process_blocking_based_pairs(seed, neg_samples_num, cands_with_match_ids, potential_neg_pairs):
+    np.random.seed(seed)
+    pos_pairs = [(cand_id, cand_id) for cand_id in cands_with_match_ids]
+    neg_pairs = potential_neg_pairs[neg_samples_num + 1]
+    all_pairs = pos_pairs + neg_pairs
+    np.random.shuffle(all_pairs)
+    return all_pairs
+
+
+def get_blocking_based_pairs(args, seed, train_or_test, dataset_partition_dict):
+    local_test_ids_dict = {}
+    neg_samples_list = args.train_neg_samples_list if train_or_test == 'train' else args.test_negative_samples_list
+    for set_size in ['small', 'medium', 'large']:
+        local_test_ids_dict[set_size] = {}
+        if train_or_test == 'train':
+            negative_sampling_pair_set = dataset_partition_dict['train']['negative_sampling'][set_size][2]
+        else:
+            negative_sampling_pair_set = dataset_partition_dict['test']['matching']['negative_sampling'][set_size][2]
+        cands_with_match_ids = set([pair[0] for pair in negative_sampling_pair_set if pair[0] == pair[1]])
+        potential_neg_pairs = get_potnetial_neg_pairs(set_size, args.bkafi_dim, train_or_test, seed)
+        for neg_samples_num in neg_samples_list:
+            local_test_ids_dict[set_size][neg_samples_num] = process_blocking_based_pairs(seed, neg_samples_num,
+                                                                                          cands_with_match_ids,
+                                                                                          potential_neg_pairs)
+    return local_test_ids_dict
+
+
+def add_blocking_based_mode_pairs(args):
+    for seed in range(1, args.seeds_num + 1):
+        # read the existing dataset partition dict
+
+        dataset_partition_dict = pkl.load(open(f"data/dataset_partitions/{args.dataset_name}_seed{seed}.pkl", 'rb'))
+        print(f"Loaded dataset partition dict for seed {seed} with blocking-based pairs")
+        dataset_partition_dict['train']['blocking-based'] = get_blocking_based_pairs(args, seed, 'train',
+                                                                                     dataset_partition_dict)
+        dataset_partition_dict['test']['matching']['blocking-based'] = get_blocking_based_pairs(args, seed, 'test',
+                                                                                                dataset_partition_dict)
+        # save the updated dataset partition dict
+        pkl.dump(dataset_partition_dict, open(f"data/dataset_partitions/{args.dataset_name}_seed{seed}.pkl", 'wb'))
+        print(f"Updated dataset partition dict for seed {seed} with blocking-based pairs")
+        print(3 * '--------------------------')
+    return
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset_name', type=str, default=config.Constants.dataset_name)
+    parser.add_argument('--blocking_based_mode', type=bool, default=True)
+    parser.add_argument('--seeds_num', type=int, default=config.Constants.seeds_num)
+    parser.add_argument('--train_neg_samples_list', type=list, default=[2, 5])
+    parser.add_argument('--test_negative_samples_list', type=list, default=[2, 5])
+    parser.add_argument('--train_size_ratio_list', type=dict, default={"small": 0.1, "medium": 0.4, "large": 0.6})
+    parser.add_argument('--test_size_ratio_list', type=dict, default={"small": 0.1, "medium": 0.5, "large": 1.0})
+    parser.add_argument('--bkafi_dim', type=int, default=3)
+
+    args = parser.parse_args()
+
+    if args.blocking_based_mode:  # load existing partitions and add blocking-based partitions for the matching mode
+        add_blocking_based_mode_pairs(args)
+    else:
+        generate_partition_dicts(args)

@@ -18,12 +18,12 @@ import pickle as pkl
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+
 def read_object_path_dict(dataset_config):
     return {'cands': dataset_config['cands_path'], 'index': dataset_config['index_path']}
 
 
 def close_polygon(vertices):
-    # A first and last vertex should be the same
     if vertices[0] != vertices[-1]:
         vertices.append(vertices[0])
     return vertices
@@ -181,11 +181,6 @@ def get_file_name(blocking_method_arg=None):
         file_name_suffix = config.Constants.file_name_suffix
         operator = config.Features.operator
         blocking_method = blocking_method_arg if blocking_method_arg is not None else config.Blocking.blocking_method
-        cand_pairs_per_item_list = config.Blocking.cand_pairs_per_item_list
-        bkafi_dim_list = config.Blocking.bkafi_dim_list
-        cand_pairs_txt = f"{cand_pairs_per_item_list[0]}-{cand_pairs_per_item_list[-1]}"
-        bkafi_dim_range = f"{bkafi_dim_list[0]}-{bkafi_dim_list[-1]}"
-        bkafi_dim_txt = f"_bkafi_dim={bkafi_dim_range}" if config.Blocking.blocking_method == 'bkafi' else ''
         file_name_suffix = (f"{file_name_suffix}_Operator={operator}_"
                             f"Blocking={blocking_method}")
     else:
@@ -236,15 +231,6 @@ def read_coordinates_from_file(data_path, is_roads=False):
     return coordinate_lists
 
 
-def standardize_obj_key(obj_key, object_type):
-    if object_type == 'cands':
-        return obj_key.split('bag_')[1]
-    elif object_type == 'index':
-        return obj_key.split('NL.IMBAG.Pand.')[1].split('-0')[0]
-    else:
-        raise ValueError('Invalid source')
-
-
 def load_object_dict(logger, path, object_name='object_dict'):
     logger.info(f"Loading object_dict from {path}")
     try:
@@ -257,68 +243,23 @@ def load_object_dict(logger, path, object_name='object_dict'):
         return None
 
 
-# def load_dataset_dict(logger, seed):
-#     file_name = get_file_name()
-#     dataset_dict_path = config.FilePaths.dataset_dict_path
-#     try:
-#         dataset_dict = joblib.load(f"{dataset_dict_path}dataset_dict_{file_name}_seed={seed}.joblib")
-#         logger.info(f"dataset_dict was loaded successfully")
-#         return dataset_dict
-#     except Exception as e:
-#         logger.error(f"Error happened while loading dataset_dict: {e}. Starting building dataset_dict...")
-#         return None
+def print_config(logger, args):
+    normalization = "True" if args.vector_normalization else "False"
+    sdr_factor = "True" if args.sdr_factor else "False"
 
-
-# def save_dataset_dict(dataset_dict, seed, logger, prep=False):
-#     file_name = get_file_name()
-#     dataset_dict_path = config.FilePaths.dataset_dict_path
-#     if not os.path.exists(dataset_dict_path):
-#         os.makedirs(dataset_dict_path)
-#     if prep:
-#         dataset_type = "prep_dataset_dict"
-#     else:
-#         dataset_type = "dataset_dict"
-#     dataset_dict_path = f"{dataset_dict_path}{dataset_type}_{file_name}_seed={seed}.joblib"
-#     saving_message = f"{dataset_type} was saved successfully"
-#     error_message = f"Error happened while saving {dataset_type}: "
-#     try:
-#         joblib.dump(dataset_dict, dataset_dict_path)
-#         logger.info(saving_message)
-#         logger.info('')
-#     except Exception as e:
-#         logger.error(f"{error_message}{e}")
-#     return
-
-
-# def save_prep_property_dict(prep_property_dict, seed, logger, prep_mode=False)
-#     file_name = get_file_name()
-#     property_dict_path = config.FilePaths.property_dict_path
-#     if not os.path.exists(property_dict_path):
-#         os.makedirs(property_dict_path)
-#     try:
-#         property_dict_path = f"{property_dict_path}/prep_property_dict_{file_name}_seed{seed}.joblib"
-#         joblib.dump(prep_property_dict, property_dict_path)
-#         logger.info(f"prep_property_dict was saved successfully")
-#         logger.info('')
-#     except Exception as e:
-#         logger.error(f"Error happened while saving prep_properties_dict: {e}")
-#     return
-
-
-
-def print_config(logger):
-    classes = ['Constants', 'FilePaths', 'Blocking', 'Features']
-    for class_name in classes:
-        logger.info(f"\n{class_name}:")
-        params = getattr(config, class_name).__dict__.items()
-        for key, val in params:
-            if not key.startswith('__'):
-                logger.info(f"{key}: {val}")
+    logger.info(f"dataset: {args.dataset_name}")
+    logger.info(f"seed_num: {args.seed_num}")
+    logger.info(f"evaluation_mode: {args.evaluation_mode}")
+    logger.info(f"blocking_method: {args.blocking_method}")
+    logger.info(f"dataset_size_version: {args.dataset_size_version}")
+    logger.info(f"vector_normalization: {normalization}")
+    logger.info(f"sdr_factor: {sdr_factor}")
+    logger.info(f"neg_samples_num: {args.neg_samples_num}")
+    logger.info(f"bkafi_criterion: {args.bkafi_criterion}")
     logger.info('')
     logger.info(2*'===============================================')
     logger.info('')
     return
-
 
 def get_feature_name_list(operator):
     feature_name_list = config.Features.object_properties
@@ -332,27 +273,35 @@ def get_feature_name_list(operator):
         raise ValueError(f"Operator {operator} is not supported")
 
 
-def generate_final_result_csv(results_dict, evaluation_mode, blocking_method, dataset_size_version, neg_samples_num):
+def generate_final_result_csv(results_dict, args):
+    evaluation_mode = args.evaluation_mode
+    blocking_method = args.blocking_method
+    dataset_size_version = args.dataset_size_version
+    neg_samples_num = args.neg_samples_num
+    vector_normalization = args.vector_normalization
+    sdr_factor = args.sdr_factor
+    bkafi_criterion = args.bkafi_criterion
     file_name = get_file_name(blocking_method)
-    results_path = config.FilePaths.results_path
+    results_path = config.FilePaths.results_path + f"{evaluation_mode} csv files/"
     if not os.path.exists(results_path[:-1]):
-        os.makedirs(results_path[:blocking_method-1])
-    # file_path = f"{results_path}FinalResults_{file_name}_{evaluation_mode}.csv"
-    final_res_dict = defaultdict(dict)
+        os.makedirs(results_path[:-1])
     if evaluation_mode == 'matching':
-        generate_final_results_matching(results_dict, results_path, file_name, dataset_size_version, neg_samples_num)
+        generate_final_results_matching(results_dict, results_path, file_name, dataset_size_version, neg_samples_num,
+                                        vector_normalization)
     elif evaluation_mode == 'blocking':
         generate_final_results_blocking(results_dict, results_path, file_name, blocking_method, dataset_size_version,
-                                        neg_samples_num)
+                                        neg_samples_num, vector_normalization, sdr_factor, bkafi_criterion)
     else:
         raise ValueError(f"Evaluation mode {evaluation_mode} is not supported")
     return
 
 
-def generate_final_results_matching(results_dict, results_path, file_name, dataset_size_version, neg_samples_num):
+def generate_final_results_matching(results_dict, results_path, file_name, dataset_size_version, neg_samples_num,
+                                    vector_normalization):
+    vector_normalization_str = "True" if vector_normalization else "False"
     final_res_dict = defaultdict(dict)
     file_path = (f"{results_path}FinalResults_{file_name}_matching_{dataset_size_version}_"
-                 f"neg_samples={neg_samples_num}.csv")
+                 f"neg_samples={neg_samples_num}_vector_normalization={vector_normalization_str}.csv")
     for model_name, model_dict in results_dict[1]['matching'].items():
         final_res_dict[model_name] = {}
         for metric in model_dict.keys():
@@ -365,11 +314,14 @@ def generate_final_results_matching(results_dict, results_path, file_name, datas
     return
 
 
-def generate_final_results_blocking(results_dict, results_path, file_name, blocking_method,
-                                    dataset_size_version, neg_samples_num):
+def generate_final_results_blocking(results_dict, results_path, file_name, blocking_method, dataset_size_version,
+                                    neg_samples_num, vector_normalization, sdr_factor, bkafi_criterion):
     final_res_dict = defaultdict(dict)
-    file_path = (f"{results_path}FinalResults_{file_name}_blocking_{blocking_method}_{dataset_size_version}_"
-                 f"neg_samples={neg_samples_num}.csv")
+    vector_normalization_str = "True" if vector_normalization else "False"
+    sdr_factor_str = "True" if sdr_factor else "False"
+    file_path = (f"{results_path}{file_name}_{dataset_size_version}_neg_samples_num{neg_samples_num}_"
+                 f"vector_normalization={vector_normalization_str}_sdr_factor_{sdr_factor_str}_"
+                 f"bkafi_criterion={bkafi_criterion}.csv")
     if "bkafi" in blocking_method:
         for bkafi_dim, bkafi_dict in results_dict[1]['blocking'].items():
             for cand_pairs_per_item, cand_dict in bkafi_dict.items():

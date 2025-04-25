@@ -40,7 +40,6 @@ class PairProcessor:
             raise ValueError(f"Operator {self.operator} is not supported")
 
     def _get_feature_vec(self, pair):
-        # The convention is that the first object in the pair is the candidate and the second belongs to the index
         feature_vec = []
         for feature_name in self.feature_name_list:
             try:
@@ -51,7 +50,6 @@ class PairProcessor:
                     feature_vec.append(self.feature_funcs_dict[feature_name](feature_name, pair))
             except:
                 print(f'Error in feature {feature_name} for pair {pair}')
-                # feature_vec.append(np.nan)
                 feature_vec.append(0.0)
         return feature_vec
 

@@ -16,10 +16,11 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 from utils import get_feature_name_list, get_file_name
+from time import time
 
 
 class FlexibleClassifier:
-    def __init__(self, dataset_dict, property_dict, params_dict, seed, logger, evaluation_mode,
+    def __init__(self, dataset_dict, property_dict, params_dict, seed, logger, dataset_name, evaluation_mode,
                  dataset_size_version, neg_samples_num, load_trained_models=False, cv=5):
         self.dataset_dict = dataset_dict
         self.property_dict = property_dict
@@ -29,7 +30,8 @@ class FlexibleClassifier:
         self.neg_samples_num = neg_samples_num
         self.load_trained_models = load_trained_models
         self.cv = cv
-        self.models_path = config.FilePaths.saved_models_path
+        self.models_path = f"{config.FilePaths.saved_models_path}/{dataset_name}/"
+        self.dataset_name = dataset_name
         self.logger = logger
         self.evaluation_mode = evaluation_mode
         self.model_dict = self._get_model_dict()
@@ -83,10 +85,6 @@ class FlexibleClassifier:
     def _get_final_feature_name_list():
         operator = config.Features.operator
         feature_name_list = get_feature_name_list(operator)
-        # shape_features = config.Features.shape
-        # neighborhood = self._get_neighborhood_feature_name_list()
-        # roads = self._get_roads_feature_name_list()
-        # feature_name_list = shape_features + neighborhood + roads
         return feature_name_list
 
     @staticmethod
@@ -121,19 +119,23 @@ class FlexibleClassifier:
         if self.load_trained_models:
             best_model = self._load_model(model_name)
             if best_model is not None:
-                return best_model
+                return best_model, 0.0
         model = self.model_dict[model_name]
-        best_model = self._train_model(model_name, model, params)
+        best_model, training_time = self._train_model(model_name, model, params)
         self._save_model(best_model, model_name)
-        return best_model
+        return best_model, training_time
 
     def _train_and_evaluate_model(self, result_dict, model_name, params):
-        best_model = self._get_best_model(model_name, params)
+        best_model, training_time = self._get_best_model(model_name, params)
         feature_name_list = self._get_final_feature_name_list()
         data_type = 'train' if self.evaluation_mode == "blocking" else 'test'
         x_test = self.dataset_dict[data_type]['X']
+        start_time = time()
         y_test_preds = best_model.predict(x_test)
-        result_dict = self._insert_results_to_dict(result_dict, model_name, y_test_preds)
+        inference_time = round(time() - start_time, 2)
+        self.logger.info(f"Model {model_name} was evaluated successfully in {inference_time} seconds")
+        result_dict = self._insert_results_to_dict(result_dict, model_name, y_test_preds,
+                                                   training_time, inference_time)
         return {'model': best_model, 'feature_name_list': feature_name_list}, result_dict
 
     def _get_y_train(self, model_name):
@@ -146,6 +148,7 @@ class FlexibleClassifier:
             return y_train
 
     def _train_model(self, model_name, model, params):
+        start_time = time()
         if 'train' not in self.dataset_dict.keys():
             raise ValueError("You first need to run the code with "
                              "config.TrainingPhase.run_preparatory_phase = True")
@@ -155,21 +158,25 @@ class FlexibleClassifier:
         grid_search = GridSearchCV(model, params, cv=self.cv, scoring=self.scorer)
         grid_search.fit(x_train, y_train)
         best_model = grid_search.best_estimator_
-        return best_model
+        total_time = round(time() - start_time, 2)
+        self.logger.info(f"Model {model_name} was trained successfully in {total_time} seconds")
+        return best_model, total_time
 
-    def _insert_results_to_dict(self, result_dict, model_name, y_test_preds, y_prediction_file=None):
+    def _insert_results_to_dict(self, result_dict, model_name, y_test_preds, training_time,
+                                inference_time, y_prediction_file=None):
         # Y_test = self.dataset_dict['test']['Y'] if not self.train_mode else self.dataset_dict['prep']['Y']
         data_type = 'train' if self.evaluation_mode == "blocking" else 'test'
         y_test = self.dataset_dict[data_type]['Y']
         result_dict[model_name]['precision'] = precision_score(y_test, y_test_preds, average='binary')
         result_dict[model_name]['recall'] = recall_score(y_test, y_test_preds, average='binary')
         result_dict[model_name]['f1'] = f1_score(y_test, y_test_preds, average='binary')
+        result_dict[model_name]['training_time'] = training_time
+        result_dict[model_name]['inference_time'] = inference_time
         # result_dict[model_name]['confusion_matrix'] = confusion_matrix(Y_test, y_test_preds)
         return result_dict
 
     def _print_results(self):
         for model_name, model_results in self.result_dict.items():
-            # self.logger.info(f"Results for model {model_name}{prep_mode_message}:")
             eval_mode_message = f" {self.evaluation_mode} mode (results over train set)" if (
                     self.evaluation_mode == "blocking") else ""
             self.logger.info(f"{eval_mode_message}")
@@ -177,13 +184,8 @@ class FlexibleClassifier:
             self.logger.info(f"Precision: {round(model_results['precision'], 3)}")
             self.logger.info(f"Recall: {round(model_results['recall'], 3)}")
             self.logger.info(f"F1 score: {round(model_results['f1'], 3)}")
-            # self.logger.info(f"Confusion matrix: {model_results['confusion_matrix']}")
             self.logger.info(3*'--------------------------')
             self.logger.info('')
-            # Display confusion matrix
-            # disp = ConfusionMatrixDisplay(confusion_matrix=model_results['confusion_matrix'])
-            # disp.plot()
-            # plt.show()
         return
 
     def feature_importance_extraction(self):
@@ -226,6 +228,7 @@ class FlexibleClassifier:
                           curr_prop_dict['index'].keys() if ind in curr_prop_dict['cands'].keys()]
             property_ratios[prop] = {'mean': round(np.mean(ratio_hist), 3),
                                      'std': round(np.std(ratio_hist), 3)}
+        property_ratios = dict(sorted(property_ratios.items(), key=lambda item: item[1]['std']))
         self._save_property_ratios(property_ratios)
         return property_ratios
 

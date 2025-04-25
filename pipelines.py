@@ -10,6 +10,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from classifier import FlexibleClassifier
 from abc import ABC, abstractmethod
+from multiprocessing import Pool, cpu_count
 
 
 class PipelineManager:
@@ -25,7 +26,9 @@ class PipelineManager:
         self.neg_samples_num = args.neg_samples_num
         self.vector_normalization = args.vector_normalization
         self.sdr_factor = args.sdr_factor
-        self.matching_candidates_generation = args.matching_candidates_generation
+        self.bkafi_criterion = args.bkafi_criterion
+        self.matching_cands_generation = args.matching_cands_generation
+        self.run_blocker_train = args.run_blocker_train
         self.dataset_dict = self._create_dataset_dict()
         self.flexible_classifier_obj = self._train_and_evaluate()
         self.result_dict = self._get_result_dict()
@@ -69,7 +72,7 @@ class PipelineManager:
         print(f"Number of index in test: {len(test_object_dict['index'])}")
 
     def _get_object_dict_paths(self):
-        object_dict_path = config.FilePaths.object_dict_path
+        object_dict_path = f"{config.FilePaths.object_dict_path}{self.dataset_name}/"
         if not os.path.exists(object_dict_path):
             os.makedirs(object_dict_path)
         if self.evaluation_mode == 'blocking':
@@ -78,7 +81,7 @@ class PipelineManager:
         else:
             train_full_path = (f"{object_dict_path}train_matching_{self.dataset_size_version}_"
                                f"neg_samples_num={self.neg_samples_num}")
-            test_full_path = f"{object_dict_path}test_matching_{self.matching_candidates_generation}" \
+            test_full_path = f"{object_dict_path}test_matching_{self.matching_cands_generation}" \
                              f"_{self.dataset_size_version}_neg_samples_num={self.neg_samples_num}"
         return f"{train_full_path}_seed_{self.seed}.joblib", f"{test_full_path}_seed_{self.seed}.joblib"
 
@@ -92,7 +95,7 @@ class PipelineManager:
         dataset_version = self.dataset_size_version
         train_object_dict = {'cands': {}, 'index': {}}
         test_object_dict = {'cands': {}, 'index': {}}
-        train_pairs = data_partition_dict['train'][dataset_version][2]
+        train_pairs = data_partition_dict['train']['negative_sampling'][dataset_version][2]
         test_data_partition = data_partition_dict['test']['blocking'][dataset_version]
         test_cands_ids = test_data_partition['cands']
         test_index_ids = test_data_partition['index']
@@ -107,8 +110,8 @@ class PipelineManager:
         test_object_dict = {'cands': {}, 'index': {}}
         dataset_version = self.dataset_size_version
         neg_num = self.neg_samples_num
-        candidates_generation = self.matching_candidates_generation
-        train_pairs = data_partition_dict['train'][dataset_version][neg_num]
+        candidates_generation = self.matching_cands_generation
+        train_pairs = data_partition_dict['train'][self.matching_cands_generation][dataset_version][neg_num]
         test_pairs = data_partition_dict['test']['matching'][candidates_generation][dataset_version][neg_num]
         train_object_dict['cands'] = {pair[0]: object_dict['cands'][pair[0]] for pair in train_pairs}
         train_object_dict['index'] = {pair[1]: object_dict['index'][pair[1]] for pair in train_pairs}
@@ -126,7 +129,6 @@ class PipelineManager:
             }
         return object_dict
 
-
     @staticmethod
     def _compute_object_centroid(vertices):
         unique_vertices = np.array(vertices)
@@ -136,21 +138,22 @@ class PipelineManager:
     def _get_vertices(polygon_mesh):
         return np.unique(np.array([coord for surface in polygon_mesh for coord in surface]), axis=0)
 
-    def _get_polygon_mesh(self, obj_data, obj_key, vertices):
-        boundaries = obj_data['CityObjects'][obj_key]['geometry'][0]['boundaries'][0]
-        if len(boundaries) < self.min_surfaces_num:
+    @staticmethod
+    def _get_polygon_mesh(data, obj_key, vertices, min_surfaces_num):
+        boundaries = data['CityObjects'][obj_key]['geometry'][0]['boundaries'][0]
+        if len(boundaries) < min_surfaces_num:
             return None
         polygon_mesh = []
         for surface in boundaries:
             polygon_mesh.append([vertices[i] for sub_surface_list in surface for i in sub_surface_list])
-        vertices = self._get_vertices(polygon_mesh)
-        centroid = self._compute_object_centroid(vertices)
+        vertices = PipelineManager._get_vertices(polygon_mesh)
+        centroid = PipelineManager._compute_object_centroid(vertices)
         return {'polygon_mesh': polygon_mesh, 'vertices': vertices, 'centroid': centroid}
 
-    def _insert_polygon_mesh(self, object_dict, obj_type, obj_data, obj_ind=None):
+    def _insert_polygon_mesh(self, object_dict, obj_type, obj_data, obj_ind, min_surfaces_num=10):
         vertices = obj_data['vertices']
         obj_key = list(obj_data['CityObjects'].keys())[0]
-        polygon_mesh = self._get_polygon_mesh(obj_data, obj_key, vertices)
+        polygon_mesh = self._get_polygon_mesh(obj_data, obj_key, vertices, min_surfaces_num)
         if polygon_mesh is not None:
             object_dict[obj_type][obj_ind] = polygon_mesh
         return object_dict
@@ -159,7 +162,8 @@ class PipelineManager:
         objects_path_dict = read_object_path_dict(dataset_config)
         object_dict = defaultdict(dict)
         for objects_type, objects_path in objects_path_dict.items():
-            for filename in os.listdir(objects_path):
+            file_list = [f for f in os.listdir(objects_path) if f.endswith('.json')]
+            for filename in file_list:
                 file_ind = int(filename.split('.')[0])
                 json_data = read_json(objects_path, file_ind)
                 object_dict = self._insert_polygon_mesh(object_dict, objects_type, json_data, file_ind)
@@ -170,7 +174,8 @@ class PipelineManager:
         objects_path_dict = read_object_path_dict(dataset_config)
         object_dict = defaultdict(dict)
         for objects_type, objects_path in objects_path_dict.items():
-            for filename in os.listdir(objects_path):
+            file_list = [f for f in os.listdir(objects_path) if f.endswith('.json')]
+            for filename in file_list:
                 file_ind = int(filename.split('.')[0])
                 json_data = read_json(objects_path, file_ind)
                 json_data = json.loads(json_data)
@@ -184,7 +189,8 @@ class PipelineManager:
         mapping_dict = defaultdict(dict)
         inv_mapping_dict = defaultdict(dict)
         for objects_type, objects_path in objects_path_dict.items():
-            for file_ind, file_name in enumerate(os.listdir(objects_path)):
+            file_list = [f for f in os.listdir(objects_path) if f.endswith('.json')]
+            for file_ind, file_name in enumerate(file_list):
                 file_name = file_name.split('.')[0]
                 json_data = read_json(objects_path, file_name)
                 object_dict = self._insert_polygon_mesh(object_dict, objects_type, json_data, file_ind)
@@ -198,31 +204,53 @@ class PipelineManager:
     def _read_objects_Hague(self, dataset_config):
         objects_path_dict = read_object_path_dict(dataset_config)
         object_dict = defaultdict(dict)
-        for objects_type, objects_path in objects_path_dict.items():
-            print(f"Reading {objects_type} objects")
+        for object_type, objects_path in objects_path_dict.items():
             file_list = [f for f in os.listdir(objects_path) if f.endswith('.json')]
-            for file_ind, file_name in enumerate(file_list):
-                print(f"File number {file_ind + 1} out of {len(file_list)}")
-                file_path = ''.join([objects_path, file_name])
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
-                vertices = data['vertices']
-                for obj_key in data['CityObjects'].keys():
-                    try:
-                        new_obj_key = standardize_obj_key(obj_key, objects_type)
-                        polygon_mesh_data = self._get_polygon_mesh(data, obj_key, vertices)
-                        if polygon_mesh_data is not None:
-                            object_dict[objects_type][new_obj_key] = polygon_mesh_data
-                    except:
-                        continue
+            file_paths = [(file_ind, os.path.join(objects_path, f)) for file_ind, f in enumerate(file_list)]
+            args = [(file_ind, fp, object_type, self.min_surfaces_num) for file_ind, fp in file_paths]
+            with Pool(processes=cpu_count() - 2) as pool:
+                results = pool.starmap(PipelineManager._process_object_file, args)
+            for partial in results:
+                object_dict[object_type].update(partial)
         intersection_keys = set(object_dict['cands'].keys()).intersection(set(object_dict['index'].keys()))
-        object_dict['cands'] = {obj_key: object_dict['cands'][obj_key] for obj_key in intersection_keys}
-        for objects_type in objects_path_dict.keys():
-            object_dict['mapping_dict'][objects_type] = {ind: obj_key for ind, obj_key in
-                                                         enumerate(object_dict[objects_type].keys())}
-            object_dict['inv_mapping_dict'][objects_type] = {obj_key: ind for ind, obj_key in
-                                                             enumerate(object_dict[objects_type].keys())}
+        object_dict['cands'] = {k: object_dict['cands'][k] for k in intersection_keys}
+        object_dict = self._generate_object_dict_mappings(object_dict, objects_path_dict)
         return object_dict
+
+    def _generate_object_dict_mappings(self, object_dict, objects_path_dict):
+        object_dict['mapping_dict'], object_dict['inv_mapping_dict'] = {}, {}
+        for object_type in objects_path_dict:
+            keys = list(object_dict[object_type].keys())
+            object_dict['mapping_dict'][object_type] = {i: k for i, k in enumerate(keys)}
+            object_dict['inv_mapping_dict'][object_type] = {k: i for i, k in enumerate(keys)}
+        return object_dict
+
+    @staticmethod
+    def _process_object_file(file_ind, file_path, object_type, min_surfaces_num):
+        print(f"Processing file {file_ind}")
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+        vertices = data['vertices']
+        partial_dict = {}
+        for obj_key in data['CityObjects'].keys():
+            try:
+                new_obj_key = PipelineManager.standardize_obj_key(obj_key, object_type)
+                polygon_mesh_data = PipelineManager._get_polygon_mesh(data, obj_key, vertices,
+                                                                      min_surfaces_num=min_surfaces_num)
+                if polygon_mesh_data is not None:
+                    partial_dict[new_obj_key] = polygon_mesh_data
+            except:
+                continue
+        return partial_dict
+
+    @staticmethod
+    def standardize_obj_key(obj_key, object_type):
+        if object_type == 'cands':
+            return obj_key.split('bag_')[1]
+        elif object_type == 'index':
+            return obj_key.split('NL.IMBAG.Pand.')[1].split('-0')[0]
+        else:
+            raise ValueError('Invalid source')
 
     @staticmethod
     def read_objects_synthetic(self, dataset_config):
@@ -262,34 +290,48 @@ class PipelineManager:
         blocking_method = self.blocking_method
         self.logger.info(f"Running blocking method {blocking_method}")
         blocker = Blocker(self.dataset_name, self.test_object_dict, self.test_property_dict, feature_importance_dict,
-                          train_property_ratios,  self.blocking_method, self.sdr_factor, 'test')
+                          train_property_ratios,  self.blocking_method, self.sdr_factor, self.bkafi_criterion, 'test')
         self.logger.info(f"The blocking process ended successfully")
         self._save_blocking_output(blocker.pos_pairs_dict, blocker.neg_pairs_dict, blocker.blocking_execution_time)
         self.blocking_result_dict = self._evaluate_blocking(blocker.pos_pairs_dict, blocker.blocking_execution_time)
         return
 
-    def _save_blocking_output(self, pos_pairs, neg_pairs, blocking_execution_time):
+    def _run_blocker_train(self, feature_importance_dict, train_property_ratios):
+        blocking_method = self.blocking_method
+        self.logger.info(f"Running blocking method {blocking_method} for train set")
+        blocker = Blocker(self.dataset_name, self.train_object_dict, self.train_property_dict, feature_importance_dict,
+                          train_property_ratios,  self.blocking_method, self.sdr_factor, self.bkafi_criterion, 'test')
+        self.logger.info(f"The blocking process for train set ended successfully")
+        pos_pairs_dict, neg_pairs_dict, execution_time = (blocker.pos_pairs_dict, blocker.neg_pairs_dict,
+                                                          blocker.blocking_execution_time)
+        self._save_blocking_output(pos_pairs_dict, neg_pairs_dict, execution_time, train_set_mode=True)
+        return
+
+    def _save_blocking_output(self, pos_pairs, neg_pairs, blocking_execution_time, train_set_mode=False):
         blocking_dict = {'pos_pairs': pos_pairs, 'neg_pairs': neg_pairs,
                          'blocking_execution_time': blocking_execution_time}
         blocking_output_path = self._get_blocking_output_path()
+        if train_set_mode:
+            blocking_output_path = blocking_output_path.replace('Operator', 'Train_Operator')
         try:
             joblib.dump(blocking_dict, blocking_output_path)
-            self.logger.info(f"Blocking output wes saved successfully")
+            message = f"Blocking results were saved successfully to {blocking_output_path}"
+            self.logger.info(message)
         except Exception as e:
             self.logger.error(f"Error happened while saving blocking results: {e}")
         return
 
     def _get_blocking_output_path(self):
         file_name = get_file_name()
-        blocking_results_path = config.FilePaths.results_path
-        vector_normalization = self.vector_normalization if self.vector_normalization is not None else 'None'
+        blocking_results_path = config.FilePaths.results_path + 'blocking_output/'
+        vector_normalization = 'True' if self.vector_normalization else 'False'
         sdr_factor = 'True' if self.sdr_factor else 'False'
         if not os.path.exists(blocking_results_path):
             os.makedirs(blocking_results_path)
-        blocking_results_path = (f"{blocking_results_path}blocking_output_{file_name}_"
+        blocking_results_path = (f"{blocking_results_path}{file_name}_"
                                  f"{self.dataset_size_version}_neg_samples_num{self.neg_samples_num}"
-                                 f"_vector_normalization_{vector_normalization}_sdr_factor_{sdr_factor}"
-                                 f"_seed={self.seed}.joblib")
+                                 f"_vector_normalization_{vector_normalization}_sdr_factor_{sdr_factor}_"
+                                 f"bkafi_criterion={self.bkafi_criterion}_seed={self.seed}.joblib")
         return blocking_results_path
 
 
@@ -304,19 +346,25 @@ class PipelineManager:
     #                           f"vector_normalization={vector_normalization}_seed={self.seed}.joblib")
     #     return property_dict_path
 
-    def _save_blocking_evaluation(self, blocking_evaluation_dict, blocking_method_arg=None):
-        file_name = get_file_name(blocking_method_arg)
-        blocking_results_path = config.FilePaths.results_path
-        if not os.path.exists(blocking_results_path):
-            os.makedirs(blocking_results_path)
-        try:
-            blocking_results_path = (f"{blocking_results_path}blocking_evaluation_results_{file_name}_"
-                                     f"{self.dataset_size_version}_neg_samples_num{self.neg_samples_num}_"
-                                     f"seed={self.seed}.joblib")
-            joblib.dump(blocking_evaluation_dict, blocking_results_path)
-            self.logger.info(f"Blocking evaluation results were saved successfully")
-        except Exception as e:
-            self.logger.error(f"Error happened while saving blocking evaluation results: {e}")
+    # def _save_blocking_evaluation(self, blocking_evaluation_dict, blocking_method_arg=None):
+    #     file_name = get_file_name(blocking_method_arg)
+    #     blocking_results_path = config.FilePaths.results_path
+    #     vector_normalization = config.Features.normalization
+    #     vector_normalization_str = vector_normalization if vector_normalization is not None else "None"
+    #     sdr_factor = config.Blocking.sdr_factor
+    #     sdr_factor_str = "True" if sdr_factor else "False"
+    #     bkafi_criterion = config.Blocking.bkafi_criterion
+    #     if not os.path.exists(blocking_results_path):
+    #         os.makedirs(blocking_results_path)
+    #     try:
+    #         blocking_results_path = (f"{blocking_results_path}blocking_evaluation_results_{file_name}_"
+    #                                  f"{self.dataset_size_version}_neg_samples_num{self.neg_samples_num}_"
+    #                                  f"vector_normalization={vector_normalization_str}_sdr_factor_{sdr_factor_str}_"
+    #                                  f"bkafi_criterion={bkafi_criterion}_seed={self.seed}.joblib")
+    #         joblib.dump(blocking_evaluation_dict, blocking_results_path)
+    #         self.logger.info(f"Blocking evaluation results were saved successfully")
+    #     except Exception as e:
+    #         self.logger.error(f"Error happened while saving blocking evaluation results: {e}")
 
     def _evaluate_blocking(self, pos_pairs_dict, blocking_execution_time):
         index_ids = set(self.test_object_dict['index'].keys())
@@ -327,7 +375,7 @@ class PipelineManager:
         else:
             blocking_res_dict = self._evaluate_not_bkafi_blocking(max_intersection, pos_pairs_dict,
                                                                   blocking_execution_time)
-        self._save_blocking_evaluation(blocking_res_dict)
+        # self._save_blocking_evaluation(blocking_res_dict)
         return blocking_res_dict
 
     def _evaluate_bkafi_blocking(self, max_intersection, pos_pairs_dict, blocking_execution_time):
@@ -339,9 +387,10 @@ class PipelineManager:
                 blocking_res_dict[bkafi_dim][cand_pairs_per_item] = {'blocking_recall': blocking_recall,
                                                                      'blocking_execution_time':
                                                                          blocking_execution_time[bkafi_dim]}
-                self.logger.info(f"Blocking recall for {self.blocking_method}_dim {bkafi_dim} and cand_pairs_per_item "
-                                 f"{cand_pairs_per_item}: {blocking_recall}")
-                self.logger.info(3*'- - - - - - - - - - - - -')
+                if cand_pairs_per_item == 10:
+                    self.logger.info(f"Blocking recall for {self.blocking_method}_dim {bkafi_dim} and "
+                                     f"cand_pairs_per_item {cand_pairs_per_item}: {blocking_recall}")
+                    self.logger.info(3*'- - - - - - - - - - - - -')
         return blocking_res_dict
 
     def _evaluate_not_bkafi_blocking(self, max_intersection, pos_pairs_dict, blocking_execution_time):
@@ -351,9 +400,9 @@ class PipelineManager:
             blocking_recall = round(len(pos_pairs) / len(max_intersection), 3)
             blocking_res_dict[cand_pairs_per_item] = {'blocking_recall': blocking_recall,
                                                       'blocking_execution_time': blocking_execution_time}
-            self.logger.info(f"Blocking recall for {self.blocking_method}, cand_pairs_per_item "
-                             f"{cand_pairs_per_item}: {blocking_recall}")
-            self.logger.info(3*'--------------------------')
+            # self.logger.info(f"Blocking recall for {self.blocking_method}, cand_pairs_per_item "
+            #                  f"{cand_pairs_per_item}: {blocking_recall}")
+            # self.logger.info(3*'--------------------------')
         return blocking_res_dict
 
     def _create_dataset_dict(self):
@@ -371,11 +420,16 @@ class PipelineManager:
         return dataset_dict
 
     def _extract_pairs(self, data_partition_dict, train_or_test):
-        if self.evaluation_mode == "blocking" or train_or_test == 'train':
-            pair_list = data_partition_dict[train_or_test][self.dataset_size_version][self.neg_samples_num]
+        if self.evaluation_mode == "blocking":
+            pair_list = data_partition_dict[train_or_test]['negative_sampling'][self.dataset_size_version] \
+                [self.neg_samples_num]
         else:
-            pair_list = data_partition_dict[train_or_test]['matching'][self.matching_candidates_generation] \
-                [self.dataset_size_version][self.neg_samples_num]
+            if train_or_test == 'train':
+                pair_list = data_partition_dict[train_or_test][self.matching_cands_generation] \
+                    [self.dataset_size_version][self.neg_samples_num]
+            else:
+                pair_list = data_partition_dict[train_or_test]['matching'][self.matching_cands_generation] \
+                    [self.dataset_size_version][self.neg_samples_num]
         pos_pairs = [pair for pair in pair_list if pair[0] == pair[1]]
         neg_pairs = [pair for pair in pair_list if pair[0] != pair[1]]
         return pos_pairs, neg_pairs
@@ -420,7 +474,10 @@ class PipelineManager:
             if property_dict is not None:
                 return property_dict
         self.logger.info(f"Generating {train_or_test} property dictionary")
-        property_dict = ObjectPropertiesProcessor(rel_object_dict, self.vector_normalization).prop_vals_dict
+        obj_property_processor = ObjectPropertiesProcessor(rel_object_dict, self.vector_normalization)
+        property_dict = obj_property_processor.prop_vals_dict
+        property_dict_generation_time = obj_property_processor.property_dict_generation_time
+        self.logger.info(f"Property dictionary generation time: {property_dict_generation_time}\n")
         if config.Constants.save_property_dict:
             self._save_property_dict(property_dict, train_or_test)
         return property_dict
@@ -448,7 +505,7 @@ class PipelineManager:
     def _get_property_dict_path(self, train_or_test):
         file_name = get_file_name_property_dict()
         property_dict_path = config.FilePaths.property_dict_path
-        vector_normalization = self.vector_normalization if self.vector_normalization is not None else 'None'
+        vector_normalization = 'True' if self.vector_normalization else 'False'
         if not os.path.exists(property_dict_path):
             os.makedirs(property_dict_path)
         property_dict_path = (f"{property_dict_path}{file_name}_{train_or_test}_{self.evaluation_mode}_"
@@ -532,7 +589,10 @@ class PipelineManager:
     def _train_and_evaluate(self, ):
         if self.evaluation_mode == 'blocking':
             feature_importance_dict, train_property_ratios = self._train_for_blocking()
-            self._run_blocker(feature_importance_dict, train_property_ratios)
+            if self.run_blocker_train:
+                self._run_blocker_train(feature_importance_dict, train_property_ratios)
+            else:
+                self._run_blocker(feature_importance_dict, train_property_ratios)
             flexible_classifier = None
         else:
             flexible_classifier = self._run_matching_pipeline()
@@ -548,7 +608,7 @@ class PipelineManager:
         load_trained_models = config.Models.load_trained_models
         cv = config.Models.cv
         flexible_classifier_obj = FlexibleClassifier(self.dataset_dict, self.train_property_dict, params_dict,
-                                                     self.seed, self.logger, 'blocking',
+                                                     self.seed, self.logger, self.dataset_name, 'blocking',
                                                      self.dataset_size_version, self.neg_samples_num,
                                                      load_trained_models, cv)
         feature_importance_dict = flexible_classifier_obj.feature_importance_extraction()
@@ -560,14 +620,11 @@ class PipelineManager:
         params_dict = self._read_config_models()
         load_trained_models = config.Models.load_trained_models
         cv = config.Models.cv
-        flexible_classifier_obj = FlexibleClassifier(self.dataset_dict, None, params_dict, self.seed,
-                                                     self.logger, 'matching', self.dataset_size_version,
+        flexible_classifier_obj = FlexibleClassifier(self.dataset_dict, None, params_dict, self.seed, self.logger,
+                                                     self.dataset_name, 'matching', self.dataset_size_version,
                                                      self.neg_samples_num, load_trained_models, cv)
         return flexible_classifier_obj
 
-    # property_dict_path = (f"{property_dict_path}{file_name}_{train_or_test}_{self.evaluation_mode}_"
-    #                       f"{self.dataset_size_version}_neg_samples_num={self.neg_samples_num}_"
-    #                       f"seed={self.seed}.joblib")
 
     def _read_config_models(self):
         model_list = config.Models.model_list if self.evaluation_mode == 'matching' else [config.Models.blocking_model]
@@ -578,6 +635,8 @@ class PipelineManager:
 
     def _get_result_dict(self):
         if self.evaluation_mode == 'blocking':
+            if self.run_blocker_train:
+                return None
             return {'blocking': self.blocking_result_dict}
         elif self.evaluation_mode == 'matching':
             return {'matching': self.flexible_classifier_obj.result_dict}

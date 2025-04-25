@@ -9,6 +9,7 @@ from utils import *
 import math
 from scipy.spatial import ConvexHull
 from multiprocessing import Pool, cpu_count
+from time import time
 
 
 class ObjectPropertiesProcessor:
@@ -22,7 +23,7 @@ class ObjectPropertiesProcessor:
         self.cores_to_use = min(cpu_count(), len(config.Features.object_properties))
         self.eigen_dict = self._create_eigen_dict()
         self.prop_names_dict = self._get_property_dict()
-        self._create_prop_vals_dict()
+        self.property_dict_generation_time = self._create_prop_vals_dict()
 
     def _get_specific_coordinates(self, coord_index):
         specific_coord_dict = defaultdict(dict)
@@ -35,34 +36,21 @@ class ObjectPropertiesProcessor:
                 specific_coord_dict[object_type][obj_ind] = coords
         return specific_coord_dict
 
-    # def _create_prop_vals_dict(self):
-    #     properties = config.Features.object_properties
-    #     self.prop_vals_dict = dict()
-    #     for prop in properties:
-    #         self.prop_vals_dict[prop] = dict()
-    #         for obj_type, object_dict in self.object_dict.items():
-    #             if obj_type not in ['cands', 'index']:
-    #                 continue
-    #             self.prop_vals_dict[prop][obj_type] = dict()
-    #             for obj_ind in object_dict.keys():
-    #                 if self.vector_normalization is None:
-    #                     self.prop_vals_dict[prop][obj_type][obj_ind] = self.prop_names_dict[prop](obj_type, obj_ind)
-    #                 else:
-    #                     self.prop_vals_dict[prop][obj_type][obj_ind] = np.log1p(self.prop_names_dict[prop]
-    #                                                                             (obj_type, obj_ind))
-    #     return
-
     def _create_prop_vals_dict(self):
+        start_time = time()
         properties = config.Features.object_properties
+        self.prop_vals_dict = {prop: {obj_type: {} for obj_type in ['cands', 'index']} for prop in properties}
         args = [
             (prop, self.object_dict, self.prop_names_dict[prop], self.vector_normalization)
             for prop in properties
         ]
-        with Pool(processes=self.cores_to_use) as pool:
+        with Pool(processes=self.cores_to_use - 2) as pool:
             aggregated_prop_dicts = pool.starmap(ObjectPropertiesProcessor.process_prop, args)
-        self.prop_vals_dict = {}
+
         for res in aggregated_prop_dicts:
             self.prop_vals_dict.update(res)
+        end_time = time()
+        return round(end_time - start_time, 2)
 
     @staticmethod
     def process_prop(prop, object_dict, prop_func, vector_normalization):
@@ -73,37 +61,10 @@ class ObjectPropertiesProcessor:
             curr_prop_dict[prop][obj_type] = {}
             for obj_ind in objs.keys():
                 val = prop_func(obj_type, obj_ind)
-                if vector_normalization == "log_transform":
+                if vector_normalization:
                     val = np.log1p(val)
                 curr_prop_dict[prop][obj_type][obj_ind] = val
         return curr_prop_dict
-
-    # def _create_prop_vals_dict_without_normalization(self):
-    #     properties = config.Features.object_properties
-    #     self.prop_vals_dict = dict()
-    #     for prop in properties:
-    #         self.prop_vals_dict[prop] = dict()
-    #         for obj_type, object_dict in self.object_dict.items():
-    #             if obj_type not in ['cands', 'index']:
-    #                 continue
-    #             self.prop_vals_dict[prop][obj_type] = dict()
-    #             for obj_ind in object_dict.keys():
-    #                 self.prop_vals_dict[prop][obj_type][obj_ind] = self.prop_names_dict[prop](obj_type, obj_ind)
-    #     return
-    #
-    # def _create_prop_vals_dict_normalization(self):
-    #     properties = config.Features.object_properties
-    #     self.prop_vals_dict = dict()
-    #     for prop in properties:
-    #         self.prop_vals_dict[prop] = dict()
-    #         for obj_type, object_dict in self.object_dict.items():
-    #             if obj_type not in ['cands', 'index']:
-    #                 continue
-    #             self.prop_vals_dict[prop][obj_type] = dict()
-    #             for obj_ind in object_dict.keys():
-    #                 self.prop_vals_dict[prop][obj_type][obj_ind] = np.log1p(self.prop_names_dict[prop]
-    #                                                                         (obj_type, obj_ind))
-    #     return
 
     def _get_property_dict(self):
         return {prop: getattr(self, f'_get_{prop}') for prop in config.Features.object_properties}
