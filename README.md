@@ -6,6 +6,7 @@ Urban environments are continuously mapped and modeled by various data collectio
 <p align="center">
   <img src="intro_fig.png" alt="3dSAGER Overview" width="500"/>
 </p>
+
 ---
 
 ## Dataset
