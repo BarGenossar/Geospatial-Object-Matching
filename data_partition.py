@@ -5,6 +5,8 @@ from utils import *
 import pickle as pkl
 import argparse
 from time import time
+from multiprocessing import Pool, cpu_count
+import numpy as np
 
 
 class DataPartitionGenerator:
@@ -40,7 +42,7 @@ class DataPartitionGenerator:
         train_ids_dict = {}
         intersection_set = cands_ids.intersection(index_ids)
         for train_size, ratio_val in self.train_size_ratio_list.items():
-            print(f"Creating training data for ({train_size})")
+            print(f"Creating training data ({train_size})")
             train_ids_dict[train_size] = {}
             train_ids_size_num = int(ratio_val * len(intersection_set))
             train_ids_for_curr_size = set(np.random.choice(list(intersection_set), train_ids_size_num, replace=False))
@@ -50,26 +52,51 @@ class DataPartitionGenerator:
                                                                                               neg_samples_num)
         return train_ids_dict
 
-    def _get_pairs_per_neg_samples(self, ids_for_curr_size, index_ids, neg_samples_num):
+    def _generate_pairs_for_id(self, args):
+        cand_id, index_ids_list, neg_samples_num, seed = args
+        np.random.seed(seed + hash(cand_id) % 1_000_000)
+        neg_samples = set(np.random.choice(index_ids_list, neg_samples_num, replace=False))
+        neg_pairs = [(cand_id, neg_id) for neg_id in neg_samples if neg_id != cand_id]
+        return [(cand_id, cand_id)] + neg_pairs
+
+    # def _get_pairs_per_neg_samples(self, ids_for_curr_size, index_ids, neg_samples_num):
+    #     np.random.seed(self.seed)
+    #     pos_pairs = [(cand_id, cand_id) for cand_id in ids_for_curr_size]
+    #     neg_pairs = []
+    #     for cand_id in ids_for_curr_size:
+    #         neg_samples = set(np.random.choice(list(index_ids), neg_samples_num, replace=False))
+    #         neg_pairs.extend([(cand_id, neg_sample) for neg_sample in neg_samples if neg_sample != cand_id])
+    #     all_pairs = pos_pairs + neg_pairs
+    #     np.random.shuffle(all_pairs)
+    #     return all_pairs
+
+    def _init_seed(self):
         np.random.seed(self.seed)
-        pos_pairs = [(cand_id, cand_id) for cand_id in ids_for_curr_size]
-        neg_pairs = []
-        for cand_id in ids_for_curr_size:
-            neg_samples = set(np.random.choice(list(index_ids), neg_samples_num, replace=False))
-            neg_pairs.extend([(cand_id, neg_sample) for neg_sample in neg_samples if neg_sample != cand_id])
-        all_pairs = pos_pairs + neg_pairs
+
+    def _get_pairs_per_neg_samples(self, ids_for_curr_size, index_ids, neg_samples_num):
+        ids_for_curr_size_list = list(ids_for_curr_size)
+        index_ids_list = list(index_ids)
+        args = [
+            (cand_id, index_ids_list, neg_samples_num, self.seed)
+            for cand_id in ids_for_curr_size_list
+        ]
+        with Pool(cpu_count(), initializer=self._init_seed, initargs=()) as pool:
+            results = pool.map(self._generate_pairs_for_id, args)
+        all_pairs = [pair for sublist in results for pair in sublist]
+        np.random.seed(self.seed)
         np.random.shuffle(all_pairs)
         return all_pairs
 
     def _get_test_ids_dict(self, cands_ids, index_ids, train_ids_dict):
         test_ids_dict = {}
         intersection_set = cands_ids.intersection(index_ids)
-        test_ids_dict['matching'] = self._get_test_pairs_for_matching(cands_ids, index_ids,
-                                                                      intersection_set, train_ids_dict)
-        test_ids_dict['blocking'] = self._get_test_data_for_blocking(index_ids, intersection_set, train_ids_dict)
+        test_ids_dict['matching'] = self._get_test_pairs_for_matching(index_ids, intersection_set, train_ids_dict)
+        test_ids_dict['blocking'] = self._get_test_data_for_blocking(cands_ids, index_ids,
+                                                                     intersection_set,
+                                                                     train_ids_dict)
         return test_ids_dict
 
-    def _get_test_pairs_for_matching(self, cands_ids, index_ids, intersection_set, train_ids_dict):
+    def _get_test_pairs_for_matching(self, index_ids, intersection_set, train_ids_dict):
         print("Creating test data for matching")
         test_matching_dict = {}
         test_matching_dict['negative_sampling'] = self._get_negative_sampling_test_ids_dict(index_ids,
@@ -93,19 +120,30 @@ class DataPartitionGenerator:
                     (test_ids_for_curr_size, index_ids, test_neg_samples)
         return local_test_ids_dict
 
-    def _get_test_data_for_blocking(self, index_ids, intersection_set, train_ids_dict):
+    def _get_test_data_for_blocking(self, cands_ids, index_ids, intersection_set, train_ids_dict, non_matched_rat=0.2):
         test_blocking_dict = defaultdict(dict)
         for test_size, ratio_val in self.test_size_ratio_list.items():
             print(f"Creating test data for blocking ({test_size})")
             corresponding_train_cands_ids = set([pair[0] for pair in
                                                  train_ids_dict[test_size][self.train_neg_samples_list[0]]])
             potential_cands_test_ids = intersection_set - corresponding_train_cands_ids
+            # non_matched_cands_ids = cands_ids - intersection_set
             cands_test_ids = set(np.random.choice(list(potential_cands_test_ids),
                                                   int(ratio_val * len(potential_cands_test_ids)), replace=False))
-            index_test_ids = cands_test_ids.copy()
-            index_test_ids.update(set(np.random.choice(list(index_ids),
-                                                       int(ratio_val * len(index_ids)),
-                                                       replace=False)))
+            # select non-matched_ratio of the intersection_set and remove them from index_ids
+            index_ids_to_remove = set(np.random.choice(list(cands_test_ids),
+                                                       int(non_matched_rat * len(cands_test_ids)), replace=False))
+            # non_matched_cands_ids = set(np.random.choice(list(non_matched_cands_ids),
+            #                                 int(non_matched_rat * len(non_matched_cands_ids)), replace=False))
+            # index_test_ids = cands_test_ids.copy()
+            # cands_test_ids.update(non_matched_cands_ids)
+            # remove from index_ids the ids that are in index_ids_to_remove
+            index_test_ids = index_ids - index_ids_to_remove
+            index_test_ids = set(np.random.choice(list(index_test_ids),
+                                                   int(ratio_val * len(index_test_ids)), replace=False))
+            # index_test_ids.update(set(np.random.choice(list(index_ids),
+            #                                            int(ratio_val * len(index_ids)),
+            #                                            replace=False)))
             test_blocking_dict[test_size] = {'cands': cands_test_ids, 'index': index_test_ids}
         return test_blocking_dict
 
@@ -159,37 +197,105 @@ class DataPartitionGenerator:
         object_dict['inv_mapping_dict'] = inv_mapping_dict
         return object_dict
 
+    @staticmethod
+    def _process_cityjson_file(args):
+        file_path, objects_type, standardize_obj_key_fn, get_polygon_mesh_fn = args
+        local_object_dict = {}
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+            vertices = data['vertices']
+            for obj_key in data['CityObjects']:
+                try:
+                    new_obj_key = standardize_obj_key_fn(obj_key, objects_type)
+                    polygon_mesh_data = get_polygon_mesh_fn(data, obj_key, vertices)
+                    if polygon_mesh_data is not None:
+                        local_object_dict[new_obj_key] = polygon_mesh_data
+                except:
+                    continue
+        except:
+            pass
+        return objects_type, local_object_dict
+
     def _read_objects_Hague(self, dataset_config):
         objects_path_dict = read_object_path_dict(dataset_config)
-        object_dict = defaultdict(dict)
+        pool_args = []
         for objects_type, objects_path in objects_path_dict.items():
             print(f"Reading {objects_type} objects")
             file_list = [f for f in os.listdir(objects_path) if f.endswith('.json')]
             for file_ind, file_name in enumerate(file_list):
                 print(f"File number {file_ind + 1} out of {len(file_list)}")
-                file_path = ''.join([objects_path, file_name])
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
-                vertices = data['vertices']
-                for obj_key in data['CityObjects'].keys():
-                    try:
-                        new_obj_key = self.standardize_obj_key(obj_key, objects_type)
-                        polygon_mesh_data = self._get_polygon_mesh(data, obj_key, vertices)
-                        if polygon_mesh_data is not None:
-                            object_dict[objects_type][new_obj_key] = polygon_mesh_data
-                    except:
-                        continue
-        intersection_keys = set(object_dict['cands'].keys()).intersection(set(object_dict['index'].keys()))
-        object_dict['cands'] = {obj_key: object_dict['cands'][obj_key] for obj_key in intersection_keys}
+                file_path = os.path.join(objects_path, file_name)
+                pool_args.append((
+                    file_path,
+                    objects_type,
+                    self.standardize_obj_key,
+                    self._get_polygon_mesh
+                ))
+        with Pool(cpu_count()) as pool:
+            results = pool.map(self._process_cityjson_file, pool_args)
+        object_dict, intersection_keys = self._generate_object_dict(results)
+        self._print_object_dict_info(object_dict, intersection_keys)
+        object_dict = self._update_object_dict_mapping(object_dict, objects_path_dict)
+        return object_dict
+
+    @staticmethod
+    def _generate_object_dict(results):
+        object_dict = defaultdict(dict)
+        for objects_type, obj_dict in results:
+            object_dict[objects_type].update(obj_dict)
+        intersection_keys = set(object_dict['cands'].keys()).intersection(object_dict['index'].keys())
+        object_dict['cands'] = {k: object_dict['cands'][k] for k in intersection_keys}
+        return object_dict, intersection_keys
+
+
+    @staticmethod
+    def _print_object_dict_info(object_dict, intersection_keys):
         print(f"Number of overlapping objects: {len(intersection_keys)}")
         print(f"Number of cands: {len(object_dict['cands'])}")
         print(f"Number of index: {len(object_dict['index'])}")
-        for objects_type in objects_path_dict.keys():
-            object_dict['mapping_dict'][objects_type] = {ind: obj_key for ind, obj_key in
-                                                         enumerate(object_dict[objects_type].keys())}
-            object_dict['inv_mapping_dict'][objects_type] = {obj_key: ind for ind, obj_key in
-                                                             enumerate(object_dict[objects_type].keys())}
+        return
+
+    @staticmethod
+    def _update_object_dict_mapping(object_dict, objects_path_dict):
+        for objects_type in objects_path_dict:
+            keys = list(object_dict[objects_type].keys())
+            object_dict['mapping_dict'][objects_type] = {i: k for i, k in enumerate(keys)}
+            object_dict['inv_mapping_dict'][objects_type] = {k: i for i, k in enumerate(keys)}
         return object_dict
+
+
+    # def _read_objects_Hague(self, dataset_config):
+    #     objects_path_dict = read_object_path_dict(dataset_config)
+    #     object_dict = defaultdict(dict)
+    #     for objects_type, objects_path in objects_path_dict.items():
+    #         print(f"Reading {objects_type} objects")
+    #         file_list = [f for f in os.listdir(objects_path) if f.endswith('.json')]
+    #         for file_ind, file_name in enumerate(file_list):
+    #             print(f"File number {file_ind + 1} out of {len(file_list)}")
+    #             file_path = ''.join([objects_path, file_name])
+    #             with open(file_path, 'r') as f:
+    #                 data = json.load(f)
+    #             vertices = data['vertices']
+    #             for obj_key in data['CityObjects'].keys():
+    #                 try:
+    #                     new_obj_key = self.standardize_obj_key(obj_key, objects_type)
+    #                     polygon_mesh_data = self._get_polygon_mesh(data, obj_key, vertices)
+    #                     if polygon_mesh_data is not None:
+    #                         object_dict[objects_type][new_obj_key] = polygon_mesh_data
+    #                 except:
+    #                     continue
+    #     intersection_keys = set(object_dict['cands'].keys()).intersection(set(object_dict['index'].keys()))
+    #     object_dict['cands'] = {obj_key: object_dict['cands'][obj_key] for obj_key in intersection_keys}
+    #     print(f"Number of overlapping objects: {len(intersection_keys)}")
+    #     print(f"Number of cands: {len(object_dict['cands'])}")
+    #     print(f"Number of index: {len(object_dict['index'])}")
+    #     for objects_type in objects_path_dict.keys():
+    #         object_dict['mapping_dict'][objects_type] = {ind: obj_key for ind, obj_key in
+    #                                                      enumerate(object_dict[objects_type].keys())}
+    #         object_dict['inv_mapping_dict'][objects_type] = {obj_key: ind for ind, obj_key in
+    #                                                          enumerate(object_dict[objects_type].keys())}
+    #     return object_dict
 
     @staticmethod
     def standardize_obj_key(obj_key, object_type):
@@ -240,6 +346,7 @@ class DataPartitionGenerator:
 def generate_partition_dicts(args):
     partition_dict_obj = DataPartitionGenerator(args)
     for seed in range(1, args.seeds_num + 1):
+        print(f"Creating dataset partition dict for seed {seed}")
         start_time = time()
         partition_dict_obj.create_dataset_partition_dict(seed)
         end_time = time()
@@ -251,8 +358,8 @@ def generate_partition_dicts(args):
 def get_potnetial_neg_pairs(dataset_size_version, bkafi_dim, train_or_test, seed):
     file_name = get_file_name()
     file_name.replace('concatenation', 'division')
-    if train_or_test == 'train':
-        file_name = file_name.replace('Operator', 'Train_Operator')
+    # if train_or_test == 'train':
+    #     file_name = file_name.replace('Operator', 'Train_Operator')
     blocking_results_dir = config.FilePaths.results_path + 'blocking_output/'
     blocking_results_path = (f"{blocking_results_dir}{file_name}_"
                              f"{dataset_size_version}_neg_samples_num2_vector_normalization_True_sdr_factor_False_"
@@ -276,7 +383,7 @@ def process_blocking_based_pairs(seed, neg_samples_num, cands_with_match_ids, po
 def get_blocking_based_pairs(args, seed, train_or_test, dataset_partition_dict):
     local_test_ids_dict = {}
     neg_samples_list = args.train_neg_samples_list if train_or_test == 'train' else args.test_negative_samples_list
-    for set_size in ['small', 'medium', 'large']:
+    for set_size in ['small', 'large']:
         local_test_ids_dict[set_size] = {}
         if train_or_test == 'train':
             negative_sampling_pair_set = dataset_partition_dict['train']['negative_sampling'][set_size][2]
@@ -325,3 +432,4 @@ if __name__ == "__main__":
         add_blocking_based_mode_pairs(args)
     else:
         generate_partition_dicts(args)
+
