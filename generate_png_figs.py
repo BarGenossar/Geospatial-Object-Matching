@@ -1,14 +1,5 @@
-import torch
-import clip
-from PIL import Image
-import torchvision.transforms as transforms
-import pickle
-import joblib
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-import os
-import faiss
-import numpy as np
+from multiprocessing import Pool, cpu_count
+from functools import partial
 import tqdm
 import argparse
 from utils import *
@@ -76,6 +67,11 @@ def get_object_dict_paths(dataset_name, dataset_size_version, evaluation_mode,
     return f"{train_full_path}_seed_{seed}.joblib", f"{test_full_path}_seed_{seed}.joblib"
 
 
+def plot_object_wrapper(args):
+    obj_id, polygon_mesh, save_dir = args
+    return plot_object(obj_id, polygon_mesh, save_dir)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_name', type=str, default=config.Constants.dataset_name)
@@ -101,18 +97,48 @@ if __name__ == "__main__":
     if not os.path.exists(png_path_index):
         os.makedirs(png_path_index)
 
+    # for seed in range(1, seeds_num + 1):
+    #     print(f"Seed: {seed}")
+    #     train_object_dict_path, test_object_dict_path = get_object_dict_paths(dataset_name, dataset_size_version,
+    #                                                                           evaluation_mode, neg_samples_num,
+    #                                                                           matching_cands_generation, seed)
+    #
+    #     for object_dict_path in [train_object_dict_path, test_object_dict_path]:
+    #
+    #         object_dict = joblib.load(object_dict_path)
+    #         for file_type, png_path in zip(['cands', 'index'], [png_path_cands, png_path_index]):
+    #             print(f"Generating images for {file_type} in {object_dict_path}...")
+    #             for obj_id, obj_data in tqdm.tqdm(object_dict[file_type].items(), mininterval=10.0):
+    #                 polygon_mesh = obj_data['polygon_mesh']
+    #                 plot_object(obj_id, polygon_mesh, png_path)
+    # print("Done!")
     for seed in range(1, seeds_num + 1):
         print(f"Seed: {seed}")
-        train_object_dict_path, test_object_dict_path = get_object_dict_paths(dataset_name, dataset_size_version,
-                                                                              evaluation_mode, neg_samples_num,
-                                                                              matching_cands_generation, seed)
+        train_object_dict_path, test_object_dict_path = get_object_dict_paths(
+            dataset_name,
+            dataset_size_version,
+            evaluation_mode,
+            neg_samples_num,
+            matching_cands_generation,
+            seed
+        )
 
         for object_dict_path in [train_object_dict_path, test_object_dict_path]:
-
             object_dict = joblib.load(object_dict_path)
+
             for file_type, png_path in zip(['cands', 'index'], [png_path_cands, png_path_index]):
                 print(f"Generating images for {file_type} in {object_dict_path}...")
-                for obj_id, obj_data in tqdm.tqdm(object_dict[file_type].items(), mininterval=10.0):
-                    polygon_mesh = obj_data['polygon_mesh']
-                    plot_object(obj_id, polygon_mesh, png_path)
+
+                args_list = [
+                    (obj_id, obj_data['polygon_mesh'], png_path)
+                    for obj_id, obj_data in object_dict[file_type].items()
+                ]
+
+                with Pool(cpu_count()-2) as pool:
+                    list(tqdm.tqdm(
+                        pool.imap_unordered(plot_object_wrapper, args_list),
+                        total=len(args_list),
+                        mininterval=10.0
+                    ))
+
     print("Done!")
