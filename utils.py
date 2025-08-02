@@ -176,6 +176,10 @@ def convert_coords(coords):
     return x, y
 
 
+def str2bool(v):
+    return v.lower() in ('true', '1', 'yes', 'y')
+
+
 def get_file_name(blocking_method_arg=None):
     if config.Constants.file_name_suffix is not None:
         file_name_suffix = config.Constants.file_name_suffix
@@ -248,7 +252,7 @@ def print_config(logger, args):
     sdr_factor = "True" if args.sdr_factor else "False"
 
     logger.info(f"dataset: {args.dataset_name}")
-    logger.info(f"seed_num: {args.seed_num}")
+    logger.info(f"seeds_num: {args.seeds_num}")
     logger.info(f"evaluation_mode: {args.evaluation_mode}")
     logger.info(f"blocking_method: {args.blocking_method}")
     logger.info(f"dataset_size_version: {args.dataset_size_version}")
