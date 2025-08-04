@@ -10,14 +10,21 @@ Urban environments are continuously mapped and modeled by various data collectio
 ---
 
 ## Dataset
+You can download the *The Hague* dataset [here](https://tinyurl.com/3dSAGER-data/).
 
-Due to space constraints, we do not upload the full raw datasets (as explained in the paper). Instead, we provide a processed version of the datasets (object dictionary)
 
-Currently, we publish only the **small variants** over **3 seeds**. The **large variant** will be uploaded soon.
 
-> **Important:**
-> 
-> - Ensure that the parameter `load_object_dict` is set to **True** in the `config.py` file before running experiments.
+[//]: # (Due to space constraints, we do not upload the full raw datasets &#40;as explained in the paper&#41;. Instead, we provide a processed version of the datasets &#40;object dictionary&#41;)
+
+[//]: # ()
+[//]: # (Currently, we publish only the **small variants** over **3 seeds**. The **large variant** will be uploaded soon.)
+
+[//]: # ()
+[//]: # (> **Important:**)
+
+[//]: # (> )
+
+[//]: # (> - Ensure that the parameter `load_object_dict` is set to **True** in the `config.py` file before running experiments.)
 
 ---
 
