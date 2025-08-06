@@ -1,44 +1,55 @@
 # 3dSAGER: Geospatial Entity Resolution over 3D Objects
 
-Urban environments are continuously mapped and modeled by various data collection platforms, including satellites, unmanned aerial vehicles, and street cameras. The growing availability of 3D geospatial data from multiple modalities has introduced new opportunities and challenges for integrating spatial knowledge at scale, particularly in high-impact domains such as urban planning and rapid disaster management.
+**3dSAGER** (3D Spatial-Aware Geospatial Entity Resolution) is an end-to-end pipeline for geospatial entity resolution over 3D objects. Unlike traditional methods that rely on spatial proximity, textual metadata, or external identifiers, 3dSAGER captures *intrinsic geometric characteristics* to robustly match spatial objects across datasets, even when coordinate systems are incompatible.
 
-3dSAGER (3D Spatial-Aware Geospatial Entity Resolution) is an end-to-end pipeline for geospatial entity resolution over 3D objects. Unlike traditional methods that rely on spatial proximity, textual metadata, or external identifiers, 3dSAGER focuses on intrinsic geometric characteristics to robustly match spatial objects across datasets, even when coordinate systems are incompatible. A key component of 3dSAGER is BKAFI, a lightweight and interpretable blocking method that efficiently generates high-recall candidate sets. Extensive experiments on real-world urban datasets demonstrate significant improvements in both accuracy and efficiency compared to strong baselines.
+A key component of 3dSAGER is **BKAFI**, a lightweight and interpretable blocking method that efficiently generates high-recall candidate sets.
+
+> 📄 The paper is currently under review for [SIGMOD 2026](https://2026.sigmod.org/).
+
 <p align="center">
-  <img src="intro_fig.png" alt="3dSAGER Overview" width="500"/>
+  <img src="intro_fig.png" alt="3dSAGER Overview" width="600"/>
 </p>
 
 ---
 
-## Dataset
-You can download the *The Hague* dataset [here](https://tinyurl.com/3dSAGERdataset).
+## 📦 Dataset
+
+You can download the *The Hague* dataset using the following link:
+
+🔗 [Download dataset](https://tinyurl.com/3dSAGERdataset)
 
 
-
-[//]: # (Due to space constraints, we do not upload the full raw datasets &#40;as explained in the paper&#41;. Instead, we provide a processed version of the datasets &#40;object dictionary&#41;)
-
-[//]: # ()
-[//]: # (Currently, we publish only the **small variants** over **3 seeds**. The **large variant** will be uploaded soon.)
-
-[//]: # ()
-[//]: # (> **Important:**)
-
-[//]: # (> )
-
-[//]: # (> - Ensure that the parameter `load_object_dict` is set to **True** in the `config.py` file before running experiments.)
+> **Note:**  
+> We provide only the **small variants** over **3 seeds** at this time. The **large variant** will be uploaded soon.
 
 ---
 
-## Experiments
+## 🚀 Running Experiments
 
-Experiments can be run using the provided `run_experiments.sh` script.
+You can run the experiments using the provided shell script:
 
-- To specify the type of evaluation, set the `eval_mode` parameter to either `blocking` or `matching` within the `run_experiments.sh` file.
-
-Example:
 ```bash
-bash run_expriments.sh
+bash run_experiments.sh
 ```
 
----
 
-Stay tuned for updates including the release of the large dataset variant and additional evaluation scripts.
+Here are some of the main variables to be configured in `config.py`:
+
+
+| Variable                                   | Description                                                                                              |
+| ------------------------------------------ |----------------------------------------------------------------------------------------------------------|
+| `dataset_name`                             | Dataset key: `"Hague"`                                                                                   |
+| `evaluation_mode`                          | `"blocking"` or `"matching"`                                                                             |
+| `dataset_size_version`                     | Size variant: `"small"`, `"large"`                                                                       |
+| `matching_cands_generation`                | How to generate candidate pairs (`"blocking-based"` or `"negative_sampling"`). Select `"blocking-based"` |
+| `neg_samples_num`                          | Number of negative samples per positive. Select 2.                                                       |
+| `seeds_num`                                | Number of seeds for experiments. Select 3.                                                               |
+| `blocking_method`          | `'bkafi'`                                                                                                |
+| `cand_pairs_per_item_list` | List of candidate counts per object                                                                      |
+| `nn_param`                 | Number of nearest neighbors to retrieve. Select 20.                                                      |
+| `sdr_factor`               | False                                                                                                    |
+| `bkafi_criterion`          | Feature selection strategy: `'feature_importance'` or `'std'`. Select `'feature_importance'`                                   |
+| `model_to_use`   | Default classifier used for prediction               |
+| `model_list`     | Available models for matching                        |
+| `blocking_model` | Classifier used in the blocking stage                |
+| `params_dict`    | Hyperparameter grid per model (for cross-validation) |
