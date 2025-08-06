@@ -18,9 +18,8 @@ You can download the *The Hague* dataset using the following link:
 
 🔗 [Download dataset](https://tinyurl.com/3dSAGERdataset)
 
+We provide further instructions for working with the *The Hague* dataset in the [`Working_with_The_Hague_Dataset.ipynb`](Working_with_The_Hague_Dataset.ipynb) notebook.
 
-> **Note:**  
-> We provide only the **small variants** over **3 seeds** at this time. The **large variant** will be uploaded soon.
 
 ---
 
@@ -31,6 +30,8 @@ You can run the experiments using the provided shell script:
 ```bash
 bash run_experiments.sh
 ```
+In the run_experiments.sh script, you must define the evaluation mode by setting eval_mode to either "blocking" or "matching". For a single basic experimental configuration, we recommend using the "small" or "large" dataset size, setting bkafi_criterion="feature_importance", normalizations=True, and sdr_factor=False.
+
 
 
 Here are some of the main variables to be configured in `config.py`:
