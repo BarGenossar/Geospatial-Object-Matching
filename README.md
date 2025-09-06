@@ -1,10 +1,9 @@
-# 3dSAGER: Geospatial Entity Resolution over 3D Objects
+# 3dSAGER: Geospatial Entity Resolution over 3D Objects ([SIGMOD 2026](https://2026.sigmod.org/))
 
 **3dSAGER** (3D Spatial-Aware Geospatial Entity Resolution) is an end-to-end pipeline for geospatial entity resolution over 3D objects. Unlike traditional methods that rely on spatial proximity, textual metadata, or external identifiers, 3dSAGER captures *intrinsic geometric characteristics* to robustly match spatial objects across datasets, even when coordinate systems are incompatible.
 
 A key component of 3dSAGER is **BKAFI**, a lightweight and interpretable blocking method that efficiently generates high-recall candidate sets.
 
-> 📄 The paper is currently under review for [SIGMOD 2026](https://2026.sigmod.org/).
 
 <p align="center">
   <img src="intro_fig.png" alt="3dSAGER Overview" width="600"/>
